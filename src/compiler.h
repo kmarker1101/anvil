@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <iostream>
 
 #include "ast.h"
 #include "dictionary.h"
@@ -192,9 +193,7 @@ private:
                 emit_execute(builder_, data_stack_ptr_, dsp_ptr_, ctx_ptr);
             }
         } else {
-            // Word not found - for now, we'll just ignore it
-            // In a real implementation, this should be a compile-time error
-            // or we should generate code to check at runtime
+            throw std::runtime_error(node->word_name + " ?");
         }
     }
 
@@ -528,6 +527,28 @@ public:
         if (ast->type == ASTNodeType::DEFINITION) {
             compile_definition(static_cast<DefinitionNode*>(ast));
             return module_.getFunction(static_cast<DefinitionNode*>(ast)->name);
+        }
+
+        // If it's a sequence, check if all children are definitions
+        if (ast->type == ASTNodeType::SEQUENCE) {
+            auto seq = static_cast<SequenceNode*>(ast);
+            bool all_definitions = true;
+            for (auto& child : seq->children) {
+                if (child->type != ASTNodeType::DEFINITION) {
+                    all_definitions = false;
+                    break;
+                }
+            }
+
+            // If all children are definitions, compile them directly
+            if (all_definitions) {
+                llvm::Function* last_func = nullptr;
+                for (auto& child : seq->children) {
+                    compile_definition(static_cast<DefinitionNode*>(child.get()));
+                    last_func = module_.getFunction(static_cast<DefinitionNode*>(child.get())->name);
+                }
+                return last_func;
+            }
         }
 
         // Otherwise, create an anonymous function to hold the code

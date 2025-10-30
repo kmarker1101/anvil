@@ -5,8 +5,8 @@
 using namespace anvil;
 using namespace anvil::test;
 
-TEST_CASE("Addition primitive", "[primitives][add]") {
-    auto ctx = execute_test("test_add", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("Addition primitive", "[primitives][add]", {
+    auto ctx = execute_test_mode("test_add", mode, [](llvm::IRBuilder<>& builder,
                                            llvm::Value* data_stack_ptr,
                                            llvm::Value* dsp_ptr) {
         // Push 2 and 3 onto the stack
@@ -19,10 +19,10 @@ TEST_CASE("Addition primitive", "[primitives][add]") {
     // Check result: 2 + 3 = 5
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 5);
-}
+})
 
-TEST_CASE("Subtraction primitive", "[primitives][sub]") {
-    auto ctx = execute_test("test_sub", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("Subtraction primitive", "[primitives][sub]", {
+    auto ctx = execute_test_mode("test_sub", mode, [](llvm::IRBuilder<>& builder,
                                            llvm::Value* data_stack_ptr,
                                            llvm::Value* dsp_ptr) {
         // Push 5 and 3 onto the stack
@@ -35,10 +35,10 @@ TEST_CASE("Subtraction primitive", "[primitives][sub]") {
     // Check result: 5 - 3 = 2
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 2);
-}
+})
 
-TEST_CASE("Multiple additions", "[primitives][add]") {
-    auto ctx = execute_test("test_multiple_add", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("Multiple additions", "[primitives][add]", {
+    auto ctx = execute_test_mode("test_multiple_add", mode, [](llvm::IRBuilder<>& builder,
                                                     llvm::Value* data_stack_ptr,
                                                     llvm::Value* dsp_ptr) {
         // Push 10, 20, 30 onto the stack
@@ -54,10 +54,10 @@ TEST_CASE("Multiple additions", "[primitives][add]") {
     // Check result: (10 + 20) + 30 = 60
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 60);
-}
+})
 
-TEST_CASE("Subtraction with negative result", "[primitives][sub]") {
-    auto ctx = execute_test("test_sub_negative", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("Subtraction with negative result", "[primitives][sub]", {
+    auto ctx = execute_test_mode("test_sub_negative", mode, [](llvm::IRBuilder<>& builder,
                                                     llvm::Value* data_stack_ptr,
                                                     llvm::Value* dsp_ptr) {
         // Push 3 and 5 onto the stack
@@ -70,10 +70,10 @@ TEST_CASE("Subtraction with negative result", "[primitives][sub]") {
     // Check result: 3 - 5 = -2
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == -2);
-}
+})
 
-TEST_CASE("Mixed operations", "[primitives][add][sub]") {
-    auto ctx = execute_test("test_mixed", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("Mixed operations", "[primitives][add][sub]", {
+    auto ctx = execute_test_mode("test_mixed", mode, [](llvm::IRBuilder<>& builder,
                                             llvm::Value* data_stack_ptr,
                                             llvm::Value* dsp_ptr) {
         // Push 100, 30, 20 onto the stack
@@ -89,10 +89,10 @@ TEST_CASE("Mixed operations", "[primitives][add][sub]") {
     // Check result: (30 - 20) = 10, then 100 + 10 = 110
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 110);
-}
+})
 
-TEST_CASE("Multiplication primitive", "[primitives][mul]") {
-    auto ctx = execute_test("test_mul", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("Multiplication primitive", "[primitives][mul]", {
+    auto ctx = execute_test_mode("test_mul", mode, [](llvm::IRBuilder<>& builder,
                                            llvm::Value* data_stack_ptr,
                                            llvm::Value* dsp_ptr) {
         // Push 6 and 7 onto the stack
@@ -105,10 +105,10 @@ TEST_CASE("Multiplication primitive", "[primitives][mul]") {
     // Check result: 6 * 7 = 42
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 42);
-}
+})
 
-TEST_CASE("/MOD primitive - exact division", "[primitives][divmod]") {
-    auto ctx = execute_test("test_divmod", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("/MOD primitive - exact division", "[primitives][divmod]", {
+    auto ctx = execute_test_mode("test_divmod", mode, [](llvm::IRBuilder<>& builder,
                                               llvm::Value* data_stack_ptr,
                                               llvm::Value* dsp_ptr) {
         // Push 20 and 4 onto the stack
@@ -122,10 +122,10 @@ TEST_CASE("/MOD primitive - exact division", "[primitives][divmod]") {
     REQUIRE(ctx.dsp == 2);
     REQUIRE(ctx.data_stack[0] == 0);  // remainder
     REQUIRE(ctx.data_stack[1] == 5);  // quotient
-}
+})
 
-TEST_CASE("/MOD primitive - with remainder", "[primitives][divmod]") {
-    auto ctx = execute_test("test_divmod_remainder", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("/MOD primitive - with remainder", "[primitives][divmod]", {
+    auto ctx = execute_test_mode("test_divmod_remainder", mode, [](llvm::IRBuilder<>& builder,
                                                         llvm::Value* data_stack_ptr,
                                                         llvm::Value* dsp_ptr) {
         // Push 7 and 2 onto the stack
@@ -139,10 +139,10 @@ TEST_CASE("/MOD primitive - with remainder", "[primitives][divmod]") {
     REQUIRE(ctx.dsp == 2);
     REQUIRE(ctx.data_stack[0] == 1);  // remainder
     REQUIRE(ctx.data_stack[1] == 3);  // quotient
-}
+})
 
-TEST_CASE("/MOD primitive - negative dividend", "[primitives][divmod]") {
-    auto ctx = execute_test("test_divmod_negative", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("/MOD primitive - negative dividend", "[primitives][divmod]", {
+    auto ctx = execute_test_mode("test_divmod_negative", mode, [](llvm::IRBuilder<>& builder,
                                                        llvm::Value* data_stack_ptr,
                                                        llvm::Value* dsp_ptr) {
         // Push -20 and 4 onto the stack
@@ -156,10 +156,10 @@ TEST_CASE("/MOD primitive - negative dividend", "[primitives][divmod]") {
     REQUIRE(ctx.dsp == 2);
     REQUIRE(ctx.data_stack[0] == 0);   // remainder
     REQUIRE(ctx.data_stack[1] == -5);  // quotient
-}
+})
 
-TEST_CASE("Complex expression", "[primitives][add][sub][mul][divmod]") {
-    auto ctx = execute_test("test_complex", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("Complex expression", "[primitives][add][sub][mul][divmod]", {
+    auto ctx = execute_test_mode("test_complex", mode, [](llvm::IRBuilder<>& builder,
                                               llvm::Value* data_stack_ptr,
                                               llvm::Value* dsp_ptr) {
         // Push 2, 3, 4 onto the stack
@@ -189,10 +189,10 @@ TEST_CASE("Complex expression", "[primitives][add][sub][mul][divmod]") {
     // Check result: (2 + 3 * 4) / 7 = 14 / 7 = 2
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 2);
-}
+})
 
-TEST_CASE("DUP primitive", "[primitives][stack][dup]") {
-    auto ctx = execute_test("test_dup", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("DUP primitive", "[primitives][stack][dup]", {
+    auto ctx = execute_test_mode("test_dup", mode, [](llvm::IRBuilder<>& builder,
                                            llvm::Value* data_stack_ptr,
                                            llvm::Value* dsp_ptr) {
         // Push 42 onto the stack
@@ -206,10 +206,10 @@ TEST_CASE("DUP primitive", "[primitives][stack][dup]") {
     REQUIRE(ctx.dsp == 2);
     REQUIRE(ctx.data_stack[0] == 42);
     REQUIRE(ctx.data_stack[1] == 42);
-}
+})
 
-TEST_CASE("SWAP primitive", "[primitives][stack][swap]") {
-    auto ctx = execute_test("test_swap", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("SWAP primitive", "[primitives][stack][swap]", {
+    auto ctx = execute_test_mode("test_swap", mode, [](llvm::IRBuilder<>& builder,
                                             llvm::Value* data_stack_ptr,
                                             llvm::Value* dsp_ptr) {
         // Push 10 and 20 onto the stack
@@ -223,10 +223,10 @@ TEST_CASE("SWAP primitive", "[primitives][stack][swap]") {
     REQUIRE(ctx.dsp == 2);
     REQUIRE(ctx.data_stack[0] == 20);
     REQUIRE(ctx.data_stack[1] == 10);
-}
+})
 
-TEST_CASE("DROP primitive", "[primitives][stack][drop]") {
-    auto ctx = execute_test("test_drop", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("DROP primitive", "[primitives][stack][drop]", {
+    auto ctx = execute_test_mode("test_drop", mode, [](llvm::IRBuilder<>& builder,
                                             llvm::Value* data_stack_ptr,
                                             llvm::Value* dsp_ptr) {
         // Push 10, 20, 30 onto the stack
@@ -240,10 +240,10 @@ TEST_CASE("DROP primitive", "[primitives][stack][drop]") {
     REQUIRE(ctx.dsp == 2);
     REQUIRE(ctx.data_stack[0] == 10);
     REQUIRE(ctx.data_stack[1] == 20);
-}
+})
 
-TEST_CASE("Stack operations combined", "[primitives][stack]") {
-    auto ctx = execute_test("test_stack_combo", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("Stack operations combined", "[primitives][stack]", {
+    auto ctx = execute_test_mode("test_stack_combo", mode, [](llvm::IRBuilder<>& builder,
                                                    llvm::Value* data_stack_ptr,
                                                    llvm::Value* dsp_ptr) {
         // Push 5 and 10
@@ -263,10 +263,10 @@ TEST_CASE("Stack operations combined", "[primitives][stack]") {
     REQUIRE(ctx.dsp == 2);
     REQUIRE(ctx.data_stack[0] == 5);
     REQUIRE(ctx.data_stack[1] == 10);
-}
+})
 
-TEST_CASE("DUP then multiply", "[primitives][stack][dup][mul]") {
-    auto ctx = execute_test("test_dup_mul", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("DUP then multiply", "[primitives][stack][dup][mul]", {
+    auto ctx = execute_test_mode("test_dup_mul", mode, [](llvm::IRBuilder<>& builder,
                                                llvm::Value* data_stack_ptr,
                                                llvm::Value* dsp_ptr) {
         // Push 7
@@ -282,10 +282,10 @@ TEST_CASE("DUP then multiply", "[primitives][stack][dup][mul]") {
     // Check result: 7 squared = 49
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 49);
-}
+})
 
-TEST_CASE("OVER primitive", "[primitives][stack][over]") {
-    auto ctx = execute_test("test_over", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("OVER primitive", "[primitives][stack][over]", {
+    auto ctx = execute_test_mode("test_over", mode, [](llvm::IRBuilder<>& builder,
                                             llvm::Value* data_stack_ptr,
                                             llvm::Value* dsp_ptr) {
         // Push 100 and 200 onto the stack
@@ -300,10 +300,10 @@ TEST_CASE("OVER primitive", "[primitives][stack][over]") {
     REQUIRE(ctx.data_stack[0] == 100);
     REQUIRE(ctx.data_stack[1] == 200);
     REQUIRE(ctx.data_stack[2] == 100);
-}
+})
 
-TEST_CASE("ROT primitive", "[primitives][stack][rot]") {
-    auto ctx = execute_test("test_rot", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("ROT primitive", "[primitives][stack][rot]", {
+    auto ctx = execute_test_mode("test_rot", mode, [](llvm::IRBuilder<>& builder,
                                            llvm::Value* data_stack_ptr,
                                            llvm::Value* dsp_ptr) {
         // Push 1, 2, 3 onto the stack
@@ -318,10 +318,10 @@ TEST_CASE("ROT primitive", "[primitives][stack][rot]") {
     REQUIRE(ctx.data_stack[0] == 2);
     REQUIRE(ctx.data_stack[1] == 3);
     REQUIRE(ctx.data_stack[2] == 1);
-}
+})
 
-TEST_CASE("OVER then add", "[primitives][stack][over][add]") {
-    auto ctx = execute_test("test_over_add", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("OVER then add", "[primitives][stack][over][add]", {
+    auto ctx = execute_test_mode("test_over_add", mode, [](llvm::IRBuilder<>& builder,
                                                 llvm::Value* data_stack_ptr,
                                                 llvm::Value* dsp_ptr) {
         // Push 5 and 10 onto the stack
@@ -338,10 +338,10 @@ TEST_CASE("OVER then add", "[primitives][stack][over][add]") {
     REQUIRE(ctx.dsp == 2);
     REQUIRE(ctx.data_stack[0] == 5);
     REQUIRE(ctx.data_stack[1] == 15);
-}
+})
 
-TEST_CASE("ROT to reorder for subtraction", "[primitives][stack][rot][sub]") {
-    auto ctx = execute_test("test_rot_sub", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("ROT to reorder for subtraction", "[primitives][stack][rot][sub]", {
+    auto ctx = execute_test_mode("test_rot_sub", mode, [](llvm::IRBuilder<>& builder,
                                                llvm::Value* data_stack_ptr,
                                                llvm::Value* dsp_ptr) {
         // Push 100, 30, 20 onto the stack
@@ -360,10 +360,10 @@ TEST_CASE("ROT to reorder for subtraction", "[primitives][stack][rot][sub]") {
     // Check result: 30 - 20 = 10
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 10);
-}
+})
 
-TEST_CASE("AND primitive", "[primitives][bitwise][and]") {
-    auto ctx = execute_test("test_and", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("AND primitive", "[primitives][bitwise][and]", {
+    auto ctx = execute_test_mode("test_and", mode, [](llvm::IRBuilder<>& builder,
                                            llvm::Value* data_stack_ptr,
                                            llvm::Value* dsp_ptr) {
         // Push 0b1100 (12) and 0b1010 (10) onto the stack
@@ -376,10 +376,10 @@ TEST_CASE("AND primitive", "[primitives][bitwise][and]") {
     // Check result: 12 & 10 = 0b1000 = 8
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 8);
-}
+})
 
-TEST_CASE("OR primitive", "[primitives][bitwise][or]") {
-    auto ctx = execute_test("test_or", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("OR primitive", "[primitives][bitwise][or]", {
+    auto ctx = execute_test_mode("test_or", mode, [](llvm::IRBuilder<>& builder,
                                           llvm::Value* data_stack_ptr,
                                           llvm::Value* dsp_ptr) {
         // Push 0b1100 (12) and 0b1010 (10) onto the stack
@@ -392,10 +392,10 @@ TEST_CASE("OR primitive", "[primitives][bitwise][or]") {
     // Check result: 12 | 10 = 0b1110 = 14
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 14);
-}
+})
 
-TEST_CASE("XOR primitive", "[primitives][bitwise][xor]") {
-    auto ctx = execute_test("test_xor", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("XOR primitive", "[primitives][bitwise][xor]", {
+    auto ctx = execute_test_mode("test_xor", mode, [](llvm::IRBuilder<>& builder,
                                            llvm::Value* data_stack_ptr,
                                            llvm::Value* dsp_ptr) {
         // Push 0b1100 (12) and 0b1010 (10) onto the stack
@@ -408,10 +408,10 @@ TEST_CASE("XOR primitive", "[primitives][bitwise][xor]") {
     // Check result: 12 ^ 10 = 0b0110 = 6
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 6);
-}
+})
 
-TEST_CASE("INVERT primitive", "[primitives][bitwise][invert]") {
-    auto ctx = execute_test("test_invert", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("INVERT primitive", "[primitives][bitwise][invert]", {
+    auto ctx = execute_test_mode("test_invert", mode, [](llvm::IRBuilder<>& builder,
                                               llvm::Value* data_stack_ptr,
                                               llvm::Value* dsp_ptr) {
         // Push 0 onto the stack
@@ -424,10 +424,10 @@ TEST_CASE("INVERT primitive", "[primitives][bitwise][invert]") {
     // Check result: ~0 = -1 (all bits set)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == -1);
-}
+})
 
-TEST_CASE("INVERT with specific value", "[primitives][bitwise][invert]") {
-    auto ctx = execute_test("test_invert_value", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("INVERT with specific value", "[primitives][bitwise][invert]", {
+    auto ctx = execute_test_mode("test_invert_value", mode, [](llvm::IRBuilder<>& builder,
                                                     llvm::Value* data_stack_ptr,
                                                     llvm::Value* dsp_ptr) {
         // Push 0b00001111 (15) onto the stack
@@ -440,10 +440,10 @@ TEST_CASE("INVERT with specific value", "[primitives][bitwise][invert]") {
     // Check result: ~15 = -16 (in two's complement)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == -16);
-}
+})
 
-TEST_CASE("Bitwise combination", "[primitives][bitwise]") {
-    auto ctx = execute_test("test_bitwise_combo", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("Bitwise combination", "[primitives][bitwise]", {
+    auto ctx = execute_test_mode("test_bitwise_combo", mode, [](llvm::IRBuilder<>& builder,
                                                      llvm::Value* data_stack_ptr,
                                                      llvm::Value* dsp_ptr) {
         // Push 255 and 15 onto the stack
@@ -459,10 +459,10 @@ TEST_CASE("Bitwise combination", "[primitives][bitwise]") {
     // Check result: ~(255 & 15) = ~15 = -16
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == -16);
-}
+})
 
-TEST_CASE("< primitive - true case", "[primitives][comparison][lt]") {
-    auto ctx = execute_test("test_lt_true", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("< primitive - true case", "[primitives][comparison][lt]", {
+    auto ctx = execute_test_mode("test_lt_true", mode, [](llvm::IRBuilder<>& builder,
                                                llvm::Value* data_stack_ptr,
                                                llvm::Value* dsp_ptr) {
         // Push 5 and 10 onto the stack
@@ -475,10 +475,10 @@ TEST_CASE("< primitive - true case", "[primitives][comparison][lt]") {
     // Check result: 5 < 10 = true (-1)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == -1);
-}
+})
 
-TEST_CASE("< primitive - false case", "[primitives][comparison][lt]") {
-    auto ctx = execute_test("test_lt_false", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("< primitive - false case", "[primitives][comparison][lt]", {
+    auto ctx = execute_test_mode("test_lt_false", mode, [](llvm::IRBuilder<>& builder,
                                                 llvm::Value* data_stack_ptr,
                                                 llvm::Value* dsp_ptr) {
         // Push 10 and 5 onto the stack
@@ -491,10 +491,10 @@ TEST_CASE("< primitive - false case", "[primitives][comparison][lt]") {
     // Check result: 10 < 5 = false (0)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 0);
-}
+})
 
-TEST_CASE("< primitive - equal values", "[primitives][comparison][lt]") {
-    auto ctx = execute_test("test_lt_equal", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("< primitive - equal values", "[primitives][comparison][lt]", {
+    auto ctx = execute_test_mode("test_lt_equal", mode, [](llvm::IRBuilder<>& builder,
                                                 llvm::Value* data_stack_ptr,
                                                 llvm::Value* dsp_ptr) {
         // Push 7 and 7 onto the stack
@@ -507,10 +507,10 @@ TEST_CASE("< primitive - equal values", "[primitives][comparison][lt]") {
     // Check result: 7 < 7 = false (0)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 0);
-}
+})
 
-TEST_CASE("< primitive - negative numbers", "[primitives][comparison][lt]") {
-    auto ctx = execute_test("test_lt_negative", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("< primitive - negative numbers", "[primitives][comparison][lt]", {
+    auto ctx = execute_test_mode("test_lt_negative", mode, [](llvm::IRBuilder<>& builder,
                                                    llvm::Value* data_stack_ptr,
                                                    llvm::Value* dsp_ptr) {
         // Push -10 and -5 onto the stack
@@ -523,10 +523,10 @@ TEST_CASE("< primitive - negative numbers", "[primitives][comparison][lt]") {
     // Check result: -10 < -5 = true (-1)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == -1);
-}
+})
 
-TEST_CASE("@ and ! primitives", "[primitives][memory][fetch][store]") {
-    auto ctx = execute_test("test_fetch_store", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("@ and ! primitives", "[primitives][memory][fetch][store]", {
+    auto ctx = execute_test_mode("test_fetch_store", mode, [](llvm::IRBuilder<>& builder,
                                                     llvm::Value* data_stack_ptr,
                                                     llvm::Value* dsp_ptr) {
         // Allocate a local variable in the generated function
@@ -562,10 +562,10 @@ TEST_CASE("@ and ! primitives", "[primitives][memory][fetch][store]") {
     // Check result: should have 42 on stack
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 42);
-}
+})
 
-TEST_CASE("C@ and C! primitives", "[primitives][memory][cfetch][cstore]") {
-    auto ctx = execute_test("test_cfetch_cstore", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("C@ and C! primitives", "[primitives][memory][cfetch][cstore]", {
+    auto ctx = execute_test_mode("test_cfetch_cstore", mode, [](llvm::IRBuilder<>& builder,
                                                       llvm::Value* data_stack_ptr,
                                                       llvm::Value* dsp_ptr) {
         // Allocate a byte variable in the generated function
@@ -601,10 +601,10 @@ TEST_CASE("C@ and C! primitives", "[primitives][memory][cfetch][cstore]") {
     // Check result: should have 255 on stack
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 255);
-}
+})
 
-TEST_CASE("C! truncates to byte", "[primitives][memory][cstore]") {
-    auto ctx = execute_test("test_cstore_truncate", [](llvm::IRBuilder<>& builder,
+TEST_BOTH_MODES("C! truncates to byte", "[primitives][memory][cstore]", {
+    auto ctx = execute_test_mode("test_cstore_truncate", mode, [](llvm::IRBuilder<>& builder,
                                                         llvm::Value* data_stack_ptr,
                                                         llvm::Value* dsp_ptr) {
         // Allocate a byte variable
@@ -635,10 +635,10 @@ TEST_CASE("C! truncates to byte", "[primitives][memory][cstore]") {
     // Check result: should have 0x34 = 52 on stack (low byte of 0x1234)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 0x34);
-}
+})
 
-TEST_CASE(">R and R> primitives", "[primitives][rstack][to-r][from-r]") {
-    auto ctx = execute_test_rstack("test_to_r_from_r",
+TEST_BOTH_MODES(">R and R> primitives", "[primitives][rstack][to-r][from-r]", {
+    auto ctx = execute_test_rstack_mode("test_to_r_from_r", mode,
                                     [](llvm::IRBuilder<>& builder,
                                        llvm::Value* data_stack_ptr,
                                        llvm::Value* return_stack_ptr,
@@ -658,10 +658,10 @@ TEST_CASE(">R and R> primitives", "[primitives][rstack][to-r][from-r]") {
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 42);
     REQUIRE(ctx.rsp == 0);  // Return stack should be empty
-}
+})
 
-TEST_CASE("R@ primitive", "[primitives][rstack][r-fetch]") {
-    auto ctx = execute_test_rstack("test_r_fetch",
+TEST_BOTH_MODES("R@ primitive", "[primitives][rstack][r-fetch]", {
+    auto ctx = execute_test_rstack_mode("test_r_fetch", mode,
                                     [](llvm::IRBuilder<>& builder,
                                        llvm::Value* data_stack_ptr,
                                        llvm::Value* return_stack_ptr,
@@ -682,10 +682,10 @@ TEST_CASE("R@ primitive", "[primitives][rstack][r-fetch]") {
     REQUIRE(ctx.data_stack[0] == 100);
     REQUIRE(ctx.rsp == 1);  // Return stack should still have value
     REQUIRE(ctx.return_stack[0] == 100);
-}
+})
 
-TEST_CASE("Return stack for temporary storage", "[primitives][rstack]") {
-    auto ctx = execute_test_rstack("test_rstack_temp",
+TEST_BOTH_MODES("Return stack for temporary storage", "[primitives][rstack]", {
+    auto ctx = execute_test_rstack_mode("test_rstack_temp", mode,
                                     [](llvm::IRBuilder<>& builder,
                                        llvm::Value* data_stack_ptr,
                                        llvm::Value* return_stack_ptr,
@@ -713,10 +713,10 @@ TEST_CASE("Return stack for temporary storage", "[primitives][rstack]") {
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 225);
     REQUIRE(ctx.rsp == 0);
-}
+})
 
-TEST_CASE("Multiple values on return stack", "[primitives][rstack]") {
-    auto ctx = execute_test_rstack("test_multiple_rstack",
+TEST_BOTH_MODES("Multiple values on return stack", "[primitives][rstack]", {
+    auto ctx = execute_test_rstack_mode("test_multiple_rstack", mode,
                                     [](llvm::IRBuilder<>& builder,
                                        llvm::Value* data_stack_ptr,
                                        llvm::Value* return_stack_ptr,
@@ -742,10 +742,10 @@ TEST_CASE("Multiple values on return stack", "[primitives][rstack]") {
     REQUIRE(ctx.data_stack[1] == 2);
     REQUIRE(ctx.data_stack[2] == 3);
     REQUIRE(ctx.rsp == 0);
-}
+})
 
-TEST_CASE("2>R and 2R> primitives", "[primitives][rstack][two-to-r][two-from-r]") {
-    auto ctx = execute_test_rstack("test_two_to_r_two_from_r",
+TEST_BOTH_MODES("2>R and 2R> primitives", "[primitives][rstack][two-to-r][two-from-r]", {
+    auto ctx = execute_test_rstack_mode("test_two_to_r_two_from_r", mode,
                                     [](llvm::IRBuilder<>& builder,
                                        llvm::Value* data_stack_ptr,
                                        llvm::Value* return_stack_ptr,
@@ -773,10 +773,10 @@ TEST_CASE("2>R and 2R> primitives", "[primitives][rstack][two-to-r][two-from-r]"
     REQUIRE(ctx.data_stack[1] == 10);
     REQUIRE(ctx.data_stack[2] == 20);
     REQUIRE(ctx.rsp == 0);
-}
+})
 
-TEST_CASE("2R@ primitive", "[primitives][rstack][two-r-fetch]") {
-    auto ctx = execute_test_rstack("test_two_r_fetch",
+TEST_BOTH_MODES("2R@ primitive", "[primitives][rstack][two-r-fetch]", {
+    auto ctx = execute_test_rstack_mode("test_two_r_fetch", mode,
                                     [](llvm::IRBuilder<>& builder,
                                        llvm::Value* data_stack_ptr,
                                        llvm::Value* return_stack_ptr,
@@ -805,10 +805,10 @@ TEST_CASE("2R@ primitive", "[primitives][rstack][two-r-fetch]") {
     REQUIRE(ctx.rsp == 2);
     REQUIRE(ctx.return_stack[0] == 100);
     REQUIRE(ctx.return_stack[1] == 200);
-}
+})
 
-TEST_CASE("2>R/2R> for DO loop indices", "[primitives][rstack][practical]") {
-    auto ctx = execute_test_rstack("test_two_r_loop_simulation",
+TEST_BOTH_MODES("2>R/2R> for DO loop indices", "[primitives][rstack][practical]", {
+    auto ctx = execute_test_rstack_mode("test_two_r_loop_simulation", mode,
                                     [](llvm::IRBuilder<>& builder,
                                        llvm::Value* data_stack_ptr,
                                        llvm::Value* return_stack_ptr,
@@ -861,10 +861,10 @@ TEST_CASE("2>R/2R> for DO loop indices", "[primitives][rstack][practical]") {
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 130);
     REQUIRE(ctx.rsp == 0);
-}
+})
 
-TEST_CASE("BRANCH primitive", "[primitives][control][branch]") {
-    auto ctx = execute_test("test_branch",
+TEST_BOTH_MODES("BRANCH primitive", "[primitives][control][branch]", {
+    auto ctx = execute_test_mode("test_branch", mode,
                             [](llvm::IRBuilder<>& builder,
                                llvm::Value* data_stack_ptr,
                                llvm::Value* dsp_ptr) {
@@ -901,10 +901,10 @@ TEST_CASE("BRANCH primitive", "[primitives][control][branch]") {
     // Check result: should be 30 (10 + 20), not involving 99
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 30);
-}
+})
 
-TEST_CASE("0BRANCH primitive - takes branch when zero", "[primitives][control][0branch]") {
-    auto ctx = execute_test("test_0branch_zero",
+TEST_BOTH_MODES("0BRANCH primitive - takes branch when zero", "[primitives][control][0branch]", {
+    auto ctx = execute_test_mode("test_0branch_zero", mode,
                             [](llvm::IRBuilder<>& builder,
                                llvm::Value* data_stack_ptr,
                                llvm::Value* dsp_ptr) {
@@ -937,10 +937,10 @@ TEST_CASE("0BRANCH primitive - takes branch when zero", "[primitives][control][0
     // Check result: should be 100 (zero flag means take the branch)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 100);
-}
+})
 
-TEST_CASE("0BRANCH primitive - falls through when non-zero", "[primitives][control][0branch]") {
-    auto ctx = execute_test("test_0branch_nonzero",
+TEST_BOTH_MODES("0BRANCH primitive - falls through when non-zero", "[primitives][control][0branch]", {
+    auto ctx = execute_test_mode("test_0branch_nonzero", mode,
                             [](llvm::IRBuilder<>& builder,
                                llvm::Value* data_stack_ptr,
                                llvm::Value* dsp_ptr) {
@@ -973,10 +973,10 @@ TEST_CASE("0BRANCH primitive - falls through when non-zero", "[primitives][contr
     // Check result: should be 200 (non-zero flag means fall through)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 200);
-}
+})
 
-TEST_CASE("EXIT primitive", "[primitives][control][exit]") {
-    auto ctx = execute_test("test_exit",
+TEST_BOTH_MODES("EXIT primitive", "[primitives][control][exit]", {
+    auto ctx = execute_test_mode("test_exit", mode,
                             [](llvm::IRBuilder<>& builder,
                                llvm::Value* data_stack_ptr,
                                llvm::Value* dsp_ptr) {
@@ -1005,10 +1005,10 @@ TEST_CASE("EXIT primitive", "[primitives][control][exit]") {
     // Check result: should be 42 (EXIT prevented 999 from being pushed)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 42);
-}
+})
 
-TEST_CASE("Conditional early exit", "[primitives][control][practical]") {
-    auto ctx = execute_test("test_conditional_exit",
+TEST_BOTH_MODES("Conditional early exit", "[primitives][control][practical]", {
+    auto ctx = execute_test_mode("test_conditional_exit", mode,
                             [](llvm::IRBuilder<>& builder,
                                llvm::Value* data_stack_ptr,
                                llvm::Value* dsp_ptr) {
@@ -1054,10 +1054,10 @@ TEST_CASE("Conditional early exit", "[primitives][control][practical]") {
     // Check result: should be 5 (exited early because 5 < 10)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 5);
-}
+})
 
-TEST_CASE("Simple IF-THEN simulation", "[primitives][control][practical]") {
-    auto ctx = execute_test("test_if_then",
+TEST_BOTH_MODES("Simple IF-THEN simulation", "[primitives][control][practical]", {
+    auto ctx = execute_test_mode("test_if_then", mode,
                             [](llvm::IRBuilder<>& builder,
                                llvm::Value* data_stack_ptr,
                                llvm::Value* dsp_ptr) {
@@ -1097,10 +1097,10 @@ TEST_CASE("Simple IF-THEN simulation", "[primitives][control][practical]") {
     // Check result: 7 < 3 = false (0), so 0BRANCH takes branch, pushing 100
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 100);
-}
+})
 
-TEST_CASE("LIT primitive", "[primitives][literal][lit]") {
-    auto ctx = execute_test("test_lit",
+TEST_BOTH_MODES("LIT primitive", "[primitives][literal][lit]", {
+    auto ctx = execute_test_mode("test_lit", mode,
                             [](llvm::IRBuilder<>& builder,
                                llvm::Value* data_stack_ptr,
                                llvm::Value* dsp_ptr) {
@@ -1117,10 +1117,10 @@ TEST_CASE("LIT primitive", "[primitives][literal][lit]") {
     // Check result: 42 + 100 = 142
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 142);
-}
+})
 
-TEST_CASE("LIT with negative values", "[primitives][literal][lit]") {
-    auto ctx = execute_test("test_lit_negative",
+TEST_BOTH_MODES("LIT with negative values", "[primitives][literal][lit]", {
+    auto ctx = execute_test_mode("test_lit_negative", mode,
                             [](llvm::IRBuilder<>& builder,
                                llvm::Value* data_stack_ptr,
                                llvm::Value* dsp_ptr) {
@@ -1137,9 +1137,9 @@ TEST_CASE("LIT with negative values", "[primitives][literal][lit]") {
     // Check result: -20
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == -20);
-}
+})
 
-TEST_CASE("EXECUTE primitive", "[primitives][execute]") {
+TEST_BOTH_MODES("EXECUTE primitive", "[primitives][execute]", {
     using namespace llvm;
 
     initialize_llvm_once();
@@ -1265,9 +1265,9 @@ TEST_CASE("EXECUTE primitive", "[primitives][execute]") {
     // Check result: 32 + 10 = 42
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 42);
-}
+})
 
-TEST_CASE("EXECUTE with multiple calls", "[primitives][execute]") {
+TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
     using namespace llvm;
 
     initialize_llvm_once();
@@ -1413,4 +1413,4 @@ TEST_CASE("EXECUTE with multiple calls", "[primitives][execute]") {
     // Check result: 5 DUP + = 10
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 10);
-}
+})

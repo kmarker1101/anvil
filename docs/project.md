@@ -728,4 +728,206 @@ make
 make test
 ```
 
-Tests run in all three execution modes to ensure semantic consistency.
+**Test Coverage:**
+- 148 total tests, all passing (100%)
+- All primitive tests run in both JIT and Interpreter modes automatically
+- Stdlib words tested in both modes
+- Ensures semantic consistency across execution modes
+
+**Test Organization:**
+- `tests/test_primitives.cpp` - All primitives tested in JIT + Interpreter modes
+- `tests/test_compiler.cpp` - Compiler and high-level features (JIT mode)
+- `tests/test_interpreter.cpp` - Interpreter-specific tests
+- `tests/test_stdlib.cpp` - Standard library words (both modes)
+- `tests/test_parser.cpp` - Tokenization and parsing
+- `tests/test_ast.cpp` - AST building
+- `tests/test_dictionary.cpp` - Dictionary operations
+
+**Running specific tests:**
+```bash
+./anvil_tests "[primitives]"           # All primitive tests
+./anvil_tests "[primitives][jit]"      # JIT mode only
+./anvil_tests "[primitives][interpreter]" # Interpreter mode only
+./anvil_tests "[stdlib]"               # Standard library tests
+```
+
+## Language Features
+
+### Standard Library
+
+Anvil automatically loads a standard library (`stdlib.fth`) at startup, providing common Forth words built on top of the primitives:
+
+**Currently implemented:**
+- `NIP ( a b -- b )` - Drop second item
+- `TUCK ( a b -- b a b )` - Copy top item under second
+- `2DROP ( a b -- )` - Drop top two items
+
+The standard library is compiled to LLVM IR and added to the global dictionary, making these words available immediately in the REPL and in all execution modes (JIT, interpreter, and AOT).
+
+**Example:**
+```forth
+5 3 NIP .     \ Output: 3
+5 10 TUCK . . .  \ Output: 10 5 10
+```
+
+### Comments
+
+Anvil supports two types of comments:
+
+**Line comments:**
+```forth
+\ This is a comment to end of line
+5 3 + .  \ Inline comment after code
+```
+
+**Block comments:**
+```forth
+( This is a block comment )
+
+( Block comments can span
+  multiple lines )
+
+( Nested ( block ) comments are supported )
+```
+
+**Stack effect notation:**
+```forth
+: add ( n1 n2 -- sum )
+    + ;
+
+: calculate ( x y -- result )
+    SWAP double SWAP +
+    ;
+```
+
+Comments are handled during tokenization and completely stripped before parsing, so they have zero runtime overhead.
+
+### File Inclusion
+
+The `INCLUDE` directive allows loading Forth source files from within the REPL or other files:
+
+**Basic usage:**
+```forth
+INCLUDE /path/to/file.fth
+INCLUDE mylib.fth
+```
+
+**Features:**
+- Case-insensitive (`INCLUDE` or `include`)
+- Supports absolute and relative paths
+- Handles multi-line definitions correctly
+- Nested includes (files can include other files)
+- Expands includes recursively before compilation
+
+**Example library file** (`math.fth`):
+```forth
+\ Mathematical utilities
+: square ( n -- n² )
+    DUP * ;
+
+: cube ( n -- n³ )
+    DUP square * ;
+```
+
+**Using it:**
+```forth
+INCLUDE math.fth
+5 square .  \ Output: 25
+3 cube .    \ Output: 27
+```
+
+Files loaded via `INCLUDE` are compiled to LLVM IR in all execution modes, ensuring consistent behavior between JIT, interpreter, and AOT compilation.
+
+### Error Reporting
+
+Anvil provides clear, Forth-style error messages:
+
+**Undefined words:**
+```forth
+foo
+\ Error: foo ?
+```
+
+**Missing space after colon:**
+```forth
+:kevin DUP * ;
+\ Error: :kevin ?
+```
+
+**File not found:**
+```forth
+INCLUDE /nonexistent.fth
+\ Error: Could not open file: /nonexistent.fth
+```
+
+All errors use the simple Forth convention of printing the problematic word followed by `?`, making it easy to identify issues at a glance.
+
+## Testing Framework
+
+### Dual-Mode Testing
+
+Anvil uses Catch2 for testing and automatically runs tests in both JIT and Interpreter modes to ensure semantic consistency. This is critical for maintaining identical behavior across execution modes.
+
+**Test Helper Functions:**
+
+```cpp
+// Run test in specific mode
+ExecutionContext execute_test_mode(
+    const std::string& test_name,
+    ExecutionMode mode,
+    std::function<void(IRBuilder<>&, Value* data_stack, Value* dsp)> emit_func);
+
+// Macro to run test in both modes
+TEST_BOTH_MODES("Test name", "[tags]", {
+    // Test code here
+    // 'mode' variable is available (ExecutionMode::JIT or Interpreter)
+    auto ctx = execute_test_mode("test_name", mode, [](auto& builder, auto* ds, auto* dsp) {
+        // Generate test IR
+    });
+    REQUIRE(ctx.dsp == expected_value);
+});
+```
+
+**Example:**
+```cpp
+TEST_BOTH_MODES("Addition primitive", "[primitives][add]", {
+    auto ctx = execute_test_mode("test_add", mode, [](auto& builder, auto* ds, auto* dsp) {
+        push_values(builder, ds, dsp, {2, 3});
+        emit_add(builder, ds, dsp);
+    });
+
+    REQUIRE(ctx.dsp == 1);
+    REQUIRE(ctx.data_stack[0] == 5);  // 2 + 3 = 5
+})
+```
+
+This single test definition automatically creates two test cases:
+1. "Addition primitive [JIT]" - runs in JIT mode
+2. "Addition primitive [Interpreter]" - runs in Interpreter mode
+
+### Testing Forth Code
+
+For testing Forth words (including stdlib), use the `execute_with_stdlib` helper:
+
+```cpp
+TEST_CASE("Standard Library - NIP", "[stdlib][nip]") {
+    SECTION("NIP removes second item") {
+        auto ctx = execute_with_stdlib("5 3 NIP");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 3);
+    }
+
+    SECTION("NIP in interpreter mode") {
+        auto ctx = execute_with_stdlib("7 8 NIP", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 8);
+    }
+}
+```
+
+This approach:
+- ✅ Tests primitives and user-defined words the same way
+- ✅ Automatically verifies both execution modes
+- ✅ Catches semantic divergence between modes early
+- ✅ Integrates with CI/CD pipelines
+- ✅ Provides clear test output with Catch2

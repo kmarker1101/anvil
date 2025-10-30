@@ -79,6 +79,7 @@ add_executable(anvil_tests
     tests/test_ast.cpp
     tests/test_compiler.cpp
     tests/test_interpreter.cpp
+    tests/test_stdlib.cpp
     src/dictionary.cpp
     src/primitives_registry.cpp
 )
@@ -93,3 +94,6 @@ catch_discover_tests(anvil_tests)
 # Minimal runtime library for AOT-compiled programs
 add_library(anvil_runtime STATIC src/runtime.c)
 target_include_directories(anvil_runtime PUBLIC src)
+
+# Copy standard library to build directory
+configure_file(${CMAKE_SOURCE_DIR}/forth/stdlib.fth ${CMAKE_BINARY_DIR}/stdlib.fth COPYONLY)

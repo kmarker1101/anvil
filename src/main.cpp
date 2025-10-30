@@ -86,6 +86,142 @@ bool execute_line(const std::string& line, ReplState& state) {
     }
 
     try {
+        // Check for INCLUDE directive
+        std::string trimmed = line;
+        // Trim leading whitespace
+        size_t start = trimmed.find_first_not_of(" \t\r\n");
+        if (start != std::string::npos) {
+            trimmed = trimmed.substr(start);
+        }
+
+        // Check if line starts with INCLUDE (case-insensitive)
+        if (trimmed.size() >= 7) {
+            std::string prefix = trimmed.substr(0, 7);
+            std::transform(prefix.begin(), prefix.end(), prefix.begin(), ::toupper);
+
+            // Make sure it's followed by whitespace or end of string (not part of a larger word)
+            bool valid_include = (prefix == "INCLUDE") &&
+                                 (trimmed.size() == 7 || std::isspace(trimmed[7]));
+
+            if (valid_include) {
+                // Extract filename (everything after INCLUDE, trimmed)
+                std::string filename = trimmed.substr(7);
+                // Trim whitespace from filename
+                size_t file_start = filename.find_first_not_of(" \t\r\n");
+                size_t file_end = filename.find_last_not_of(" \t\r\n");
+                if (file_start != std::string::npos && file_end != std::string::npos) {
+                    filename = filename.substr(file_start, file_end - file_start + 1);
+
+                    // Load and execute the file
+                    std::ifstream file(filename);
+                    if (!file.is_open()) {
+                        std::cerr << "Error: Could not open file: " << filename << "\n";
+                        return true;
+                    }
+
+                    // Read entire file and expand nested INCLUDEs
+                    std::stringstream expanded_source;
+                    std::string line;
+                    while (std::getline(file, line)) {
+                        // Check if this line is an INCLUDE directive
+                        std::string trimmed_line = line;
+                        size_t trim_start = trimmed_line.find_first_not_of(" \t\r\n");
+                        if (trim_start != std::string::npos) {
+                            trimmed_line = trimmed_line.substr(trim_start);
+                        }
+
+                        if (trimmed_line.size() >= 7) {
+                            std::string prefix = trimmed_line.substr(0, 7);
+                            std::transform(prefix.begin(), prefix.end(), prefix.begin(), ::toupper);
+                            bool is_include = (prefix == "INCLUDE") &&
+                                            (trimmed_line.size() == 7 || std::isspace(trimmed_line[7]));
+
+                            if (is_include) {
+                                // Extract nested filename
+                                std::string nested_file = trimmed_line.substr(7);
+                                size_t nested_start = nested_file.find_first_not_of(" \t\r\n");
+                                size_t nested_end = nested_file.find_last_not_of(" \t\r\n");
+                                if (nested_start != std::string::npos && nested_end != std::string::npos) {
+                                    nested_file = nested_file.substr(nested_start, nested_end - nested_start + 1);
+
+                                    // Recursively load nested file
+                                    std::ifstream nested(nested_file);
+                                    if (nested.is_open()) {
+                                        expanded_source << nested.rdbuf();
+                                        nested.close();
+                                    } else {
+                                        std::cerr << "Error: Could not open nested file: " << nested_file << "\n";
+                                    }
+                                }
+                                continue;
+                            }
+                        }
+
+                        // Not an INCLUDE line, add it to source
+                        expanded_source << line << "\n";
+                    }
+                    file.close();
+
+                    std::string source = expanded_source.str();
+
+                    // Parse the entire file as one unit
+                    ASTBuilder file_builder;
+                    auto file_ast = file_builder.parse(source);
+
+                    if (!file_ast) {
+                        std::cerr << "Parse error in file: " << filename << "\n";
+                        return true;
+                    }
+
+                    // Compile it
+                    Compiler compiler(state.llvm_ctx, *state.module);
+                    llvm::Function* func = compiler.compile(file_ast.get());
+
+                    if (!func) {
+                        std::cerr << "Compilation error in file: " << filename << "\n";
+                        return true;
+                    }
+
+                    // Verify function
+                    std::string error_str;
+                    llvm::raw_string_ostream error_stream(error_str);
+                    if (llvm::verifyFunction(*func, &error_stream)) {
+                        std::cerr << "Verification failed in file " << filename << ": " << error_str << "\n";
+                        return true;
+                    }
+
+                    // Check if this is a definition or executable code
+                    bool is_definition = (func->getName().str().find("__main") == std::string::npos);
+
+                    if (is_definition) {
+                        // Definition was added to dictionary
+                        std::cout << "ok\n";
+                    } else {
+                        // Execute the code
+                        auto module_clone = llvm::CloneModule(*state.module);
+
+                        std::string engine_error;
+                        AnvilExecutionEngine* engine = AnvilExecutionEngine::create(
+                            std::move(module_clone), state.mode, &engine_error);
+
+                        if (!engine) {
+                            std::cerr << "Engine creation failed: " << engine_error << "\n";
+                            return true;
+                        }
+
+                        engine->execute(func, &state.ctx);
+                        delete engine;
+                        std::cout << "ok\n";
+                    }
+
+                    return true;
+                } else {
+                    std::cerr << "Error: INCLUDE requires a filename\n";
+                    return true;
+                }
+            }
+        }
+
         // Parse to AST
         ASTBuilder builder;
         auto ast = builder.parse(line);
@@ -312,6 +448,24 @@ bool compile_file(const std::string& input_file, const std::string& output_file)
     llvm::Module module("anvil_aot", llvm_ctx);
     Compiler compiler(llvm_ctx, module);
 
+    // Load standard library first
+    std::string exe_dir = get_executable_dir();
+    std::string stdlib_path = exe_dir + get_path_sep() + "stdlib.fth";
+    std::ifstream stdlib_file(stdlib_path);
+    if (stdlib_file.is_open()) {
+        std::stringstream stdlib_buffer;
+        stdlib_buffer << stdlib_file.rdbuf();
+        std::string stdlib_source = stdlib_buffer.str();
+        stdlib_file.close();
+
+        // Parse and compile stdlib
+        ASTBuilder stdlib_builder;
+        auto stdlib_ast = stdlib_builder.parse(stdlib_source);
+        if (stdlib_ast) {
+            compiler.compile(stdlib_ast.get());
+        }
+    }
+
     // Compile the code
     llvm::Function* func = compiler.compile(ast.get());
 
@@ -354,7 +508,6 @@ bool compile_file(const std::string& input_file, const std::string& output_file)
     }
 
     // Find runtime library
-    std::string exe_dir = get_executable_dir();
     std::string runtime_lib = exe_dir + path_sep + get_runtime_lib_name();
 
     // Link with runtime library
@@ -483,6 +636,20 @@ int main(int argc, char** argv) {
 
     // Create REPL state
     ReplState state(mode);
+
+    // Load standard library
+    std::string exe_dir = get_executable_dir();
+    std::string stdlib_path = exe_dir + get_path_sep() + "stdlib.fth";
+    std::ifstream stdlib_file(stdlib_path);
+    if (stdlib_file.is_open()) {
+        std::stringstream buffer;
+        buffer << stdlib_file.rdbuf();
+        std::string stdlib_source = buffer.str();
+        stdlib_file.close();
+
+        execute_line(stdlib_source, state);
+    }
+    // If stdlib doesn't exist, continue without it
 
     // REPL loop
 #ifdef HAVE_READLINE

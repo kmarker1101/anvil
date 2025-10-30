@@ -201,6 +201,14 @@ public:
         // Parse a word
         std::string word = parse_word();
 
+        // Check for common errors
+        if (word.size() > 1 && word[0] == ':') {
+            throw std::runtime_error(word + " ?");
+        }
+        if (word.size() > 1 && word[0] == ';') {
+            throw std::runtime_error(word + " ?");
+        }
+
         // Try to parse as number
         int64_t num_value;
         if (try_parse_number(word, num_value)) {
