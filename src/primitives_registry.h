@@ -16,9 +16,11 @@ namespace anvil {
 using PrimitiveEmitFn = std::function<void(
     llvm::IRBuilder<>&,      // builder
     llvm::Value*,            // data_stack_ptr
-    llvm::Value*,            // return_stack_ptr (may be null for data-only primitives)
+    llvm::Value*,            // return_stack_ptr
+    llvm::Value*,            // data_space_ptr
     llvm::Value*,            // dsp_ptr
-    llvm::Value*             // rsp_ptr (may be null for data-only primitives)
+    llvm::Value*,            // rsp_ptr
+    llvm::Value*             // here_ptr
 )>;
 
 // Registry of primitive words

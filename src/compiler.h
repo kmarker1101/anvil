@@ -40,22 +40,32 @@ private:
     // Pointers to current stack locations (when inside a function)
     llvm::Value* data_stack_ptr_;
     llvm::Value* return_stack_ptr_;
+    llvm::Value* data_space_ptr_;
     llvm::Value* dsp_ptr_;
     llvm::Value* rsp_ptr_;
+    llvm::Value* here_ptr_;
 
     // Stack of loop exit blocks for LEAVE support
     std::vector<llvm::BasicBlock*> loop_exit_stack_;
+
+    // Compile-time data space allocation tracker
+    // Tracks the offset into data_space for VARIABLE/CONSTANT allocations
+    size_t compile_time_here_;
 
     // Initialize ExecutionContext struct type
     void init_context_type() {
         llvm::ArrayType* stack_array_type =
             llvm::ArrayType::get(builder_.getInt64Ty(), DATA_STACK_SIZE);
+        llvm::ArrayType* data_space_array_type =
+            llvm::ArrayType::get(builder_.getInt8Ty(), DATA_SPACE_SIZE);
 
         ctx_type_ = llvm::StructType::create(context_, {
-            stack_array_type,      // data_stack
-            stack_array_type,      // return_stack
-            builder_.getInt64Ty(), // dsp
-            builder_.getInt64Ty()  // rsp
+            stack_array_type,       // data_stack
+            stack_array_type,       // return_stack
+            data_space_array_type,  // data_space
+            builder_.getInt64Ty(),  // dsp
+            builder_.getInt64Ty(),  // rsp
+            builder_.getInt64Ty()   // here
         }, "ExecutionContext");
     }
 
@@ -81,10 +91,13 @@ private:
         llvm::Value* ctx_ptr = func->getArg(0);
 
         // Get pointers to stack arrays and counters
+        // Struct layout: data_stack, return_stack, data_space, dsp, rsp, here
         data_stack_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 0, "data_stack_ptr");
         return_stack_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 1, "return_stack_ptr");
-        dsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 2, "dsp_ptr");
-        rsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 3, "rsp_ptr");
+        data_space_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 2, "data_space_ptr");
+        dsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 3, "dsp_ptr");
+        rsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 4, "rsp_ptr");
+        here_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 5, "here_ptr");
     }
 
     // Compile an AST node to LLVM IR
@@ -132,6 +145,14 @@ private:
             case ASTNodeType::STRING_LITERAL:
                 compile_string_literal(static_cast<StringLiteralNode*>(node));
                 break;
+
+            case ASTNodeType::VARIABLE:
+                compile_variable(static_cast<VariableNode*>(node));
+                break;
+
+            case ASTNodeType::CONSTANT:
+                compile_constant(static_cast<ConstantNode*>(node));
+                break;
         }
     }
 
@@ -165,7 +186,8 @@ private:
         const PrimitiveEmitFn* prim_fn = global_primitives.get_primitive(node->word_name);
         if (prim_fn) {
             // Emit inline IR for primitive
-            (*prim_fn)(builder_, data_stack_ptr_, return_stack_ptr_, dsp_ptr_, rsp_ptr_);
+            (*prim_fn)(builder_, data_stack_ptr_, return_stack_ptr_, data_space_ptr_,
+                      dsp_ptr_, rsp_ptr_, here_ptr_);
             return;
         }
 
@@ -217,8 +239,10 @@ private:
         llvm::Function* prev_func = current_function_;
         llvm::Value* prev_data_stack = data_stack_ptr_;
         llvm::Value* prev_return_stack = return_stack_ptr_;
+        llvm::Value* prev_data_space = data_space_ptr_;
         llvm::Value* prev_dsp = dsp_ptr_;
         llvm::Value* prev_rsp = rsp_ptr_;
+        llvm::Value* prev_here = here_ptr_;
 
         // Set up new function context
         builder_.SetInsertPoint(entry);
@@ -240,14 +264,117 @@ private:
         current_function_ = prev_func;
         data_stack_ptr_ = prev_data_stack;
         return_stack_ptr_ = prev_return_stack;
+        data_space_ptr_ = prev_data_space;
         dsp_ptr_ = prev_dsp;
         rsp_ptr_ = prev_rsp;
+        here_ptr_ = prev_here;
 
         // Add word to dictionary with LLVM function
         ExecutionToken xt = reinterpret_cast<ExecutionToken>(
             reinterpret_cast<void*>(word_func)
         );
         global_dictionary.add_word(node->name, xt, WORD_NORMAL, word_func);
+    }
+
+    // Compile VARIABLE: allocates space at compile-time and creates a word that pushes the address
+    void compile_variable(VariableNode* node) {
+        // Allocate space at compile time by reserving a fixed offset in data_space
+        size_t var_offset = compile_time_here_;
+        compile_time_here_ += 8;  // Allocate one cell (8 bytes)
+
+        // Create a function that computes and pushes: data_space_ptr + offset
+        llvm::Function* var_func = create_function(node->name);
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context_, "entry", var_func);
+
+        llvm::BasicBlock* prev_insert_block = builder_.GetInsertBlock();
+        llvm::Function* prev_func = current_function_;
+        llvm::Value* prev_data_stack = data_stack_ptr_;
+        llvm::Value* prev_return_stack = return_stack_ptr_;
+        llvm::Value* prev_data_space = data_space_ptr_;
+        llvm::Value* prev_dsp = dsp_ptr_;
+        llvm::Value* prev_rsp = rsp_ptr_;
+        llvm::Value* prev_here = here_ptr_;
+
+        builder_.SetInsertPoint(entry);
+        current_function_ = var_func;
+        setup_stack_pointers(var_func);
+
+        // Calculate address: data_space + var_offset
+        llvm::Type *i8_ptr_type = llvm::PointerType::get(context_, 0);
+        llvm::Value *data_space_i8 = builder_.CreateBitCast(data_space_ptr_, i8_ptr_type);
+        llvm::Value *var_addr_ptr = builder_.CreateGEP(
+            builder_.getInt8Ty(), data_space_i8,
+            builder_.getInt64(var_offset), "var_addr_ptr");
+
+        // Convert to int64
+        llvm::Value *var_addr = builder_.CreatePtrToInt(var_addr_ptr, builder_.getInt64Ty(), "var_addr");
+
+        // Push address onto stack
+        llvm::Value* dsp = builder_.CreateLoad(builder_.getInt64Ty(), dsp_ptr_, "dsp");
+        llvm::Value* stack_top = builder_.CreateGEP(builder_.getInt64Ty(), data_stack_ptr_, dsp, "stack_top");
+        builder_.CreateStore(var_addr, stack_top);
+        llvm::Value* new_dsp = builder_.CreateAdd(dsp, builder_.getInt64(1), "new_dsp");
+        builder_.CreateStore(new_dsp, dsp_ptr_);
+
+        builder_.CreateRetVoid();
+
+        if (prev_insert_block) {
+            builder_.SetInsertPoint(prev_insert_block);
+        }
+        current_function_ = prev_func;
+        data_stack_ptr_ = prev_data_stack;
+        return_stack_ptr_ = prev_return_stack;
+        data_space_ptr_ = prev_data_space;
+        dsp_ptr_ = prev_dsp;
+        rsp_ptr_ = prev_rsp;
+        here_ptr_ = prev_here;
+
+        ExecutionToken xt = reinterpret_cast<ExecutionToken>(
+            reinterpret_cast<void*>(var_func)
+        );
+        global_dictionary.add_word(node->name, xt, WORD_NORMAL, var_func);
+    }
+
+    // Compile CONSTANT: creates a word that pushes a literal value
+    void compile_constant(ConstantNode* node) {
+        // Create a function that just pushes the constant value
+        // The value is embedded in the LLVM IR as a literal
+        llvm::Function* const_func = create_function(node->name);
+        llvm::BasicBlock* entry = llvm::BasicBlock::Create(context_, "entry", const_func);
+
+        llvm::BasicBlock* prev_insert_block = builder_.GetInsertBlock();
+        llvm::Function* prev_func = current_function_;
+        llvm::Value* prev_data_stack = data_stack_ptr_;
+        llvm::Value* prev_return_stack = return_stack_ptr_;
+        llvm::Value* prev_data_space = data_space_ptr_;
+        llvm::Value* prev_dsp = dsp_ptr_;
+        llvm::Value* prev_rsp = rsp_ptr_;
+        llvm::Value* prev_here = here_ptr_;
+
+        builder_.SetInsertPoint(entry);
+        current_function_ = const_func;
+        setup_stack_pointers(const_func);
+
+        // Push the constant value onto stack using emit_lit
+        emit_lit(builder_, data_stack_ptr_, dsp_ptr_, node->value);
+
+        builder_.CreateRetVoid();
+
+        if (prev_insert_block) {
+            builder_.SetInsertPoint(prev_insert_block);
+        }
+        current_function_ = prev_func;
+        data_stack_ptr_ = prev_data_stack;
+        return_stack_ptr_ = prev_return_stack;
+        data_space_ptr_ = prev_data_space;
+        dsp_ptr_ = prev_dsp;
+        rsp_ptr_ = prev_rsp;
+        here_ptr_ = prev_here;
+
+        ExecutionToken xt = reinterpret_cast<ExecutionToken>(
+            reinterpret_cast<void*>(const_func)
+        );
+        global_dictionary.add_word(node->name, xt, WORD_NORMAL, const_func);
     }
 
     // Compile IF...THEN
@@ -513,8 +640,11 @@ public:
           current_function_(nullptr),
           data_stack_ptr_(nullptr),
           return_stack_ptr_(nullptr),
+          data_space_ptr_(nullptr),
           dsp_ptr_(nullptr),
-          rsp_ptr_(nullptr) {
+          rsp_ptr_(nullptr),
+          here_ptr_(nullptr),
+          compile_time_here_(0) {
         init_context_type();
     }
 
