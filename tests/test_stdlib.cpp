@@ -407,3 +407,121 @@ TEST_CASE("Standard Library - Combined operations", "[stdlib][combined]") {
         REQUIRE(ctx.data_stack[3] == 5);
     }
 }
+
+TEST_CASE("Standard Library - CELLS", "[stdlib][cells]") {
+    SECTION("CELLS converts 0 cells") {
+        auto ctx = execute_with_stdlib("0 CELLS");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("CELLS converts 1 cell") {
+        auto ctx = execute_with_stdlib("1 CELLS");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 8);
+    }
+
+    SECTION("CELLS converts 5 cells") {
+        auto ctx = execute_with_stdlib("5 CELLS");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 40);
+    }
+
+    SECTION("CELLS converts 10 cells") {
+        auto ctx = execute_with_stdlib("10 CELLS");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 80);
+    }
+
+    SECTION("CELLS in JIT mode") {
+        auto ctx = execute_with_stdlib("3 CELLS", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 24);
+    }
+
+    SECTION("CELLS in interpreter mode") {
+        auto ctx = execute_with_stdlib("7 CELLS", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 56);
+    }
+}
+
+TEST_CASE("Standard Library - CELL+", "[stdlib][cell+]") {
+    SECTION("CELL+ adds 8 to address") {
+        auto ctx = execute_with_stdlib("100 CELL+");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 108);
+    }
+
+    SECTION("CELL+ with zero") {
+        auto ctx = execute_with_stdlib("0 CELL+");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 8);
+    }
+
+    SECTION("Multiple CELL+ operations") {
+        auto ctx = execute_with_stdlib("0 CELL+ CELL+ CELL+");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 24);
+    }
+
+    SECTION("CELL+ in JIT mode") {
+        auto ctx = execute_with_stdlib("200 CELL+", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 208);
+    }
+
+    SECTION("CELL+ in interpreter mode") {
+        auto ctx = execute_with_stdlib("1000 CELL+", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1008);
+    }
+}
+
+TEST_CASE("Standard Library - +!", "[stdlib][plus-store]") {
+    SECTION("+! adds to memory location using ! and @") {
+        // First test: use ! to store, then +! to add
+        auto ctx = execute_with_stdlib("HERE DUP 42 SWAP ! DUP 10 SWAP +! @");
+        // Stack: ( 52 )
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 52);
+    }
+
+    SECTION("+! with comma and fetch") {
+        auto ctx = execute_with_stdlib("42 HERE DUP >R ! R> DUP 10 SWAP +! @");
+        // Store 42 at HERE, then add 10 to it, then fetch
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 52);
+    }
+}
+
+TEST_CASE("Standard Library - Memory helpers combined", "[stdlib][memory]") {
+    SECTION("Using HERE, comma, and @ together") {
+        auto ctx = execute_with_stdlib("HERE 99 , HERE 8 - @");
+        REQUIRE(ctx.dsp == 2);
+        int64_t* data_as_cells = reinterpret_cast<int64_t*>(ctx.data_space);
+        REQUIRE(data_as_cells[0] == 99);
+        REQUIRE(ctx.data_stack[1] == 99);  // Value read back
+    }
+
+    SECTION("Allocate space with CELLS and ALLOT") {
+        auto ctx = execute_with_stdlib("3 CELLS ALLOT HERE");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.here == 24);  // 3 cells = 24 bytes
+    }
+
+    SECTION("Navigate cells with CELL+") {
+        // Use HERE and comma to store values, then read them back
+        auto ctx = execute_with_stdlib("HERE 10 , 20 , DROP HERE 16 - @");
+        // Stores 10 and 20, then reads back the first value
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("Store and retrieve using manual variable pattern") {
+        // Pattern: get address, store value, retrieve it
+        auto ctx = execute_with_stdlib("HERE DUP 42 SWAP ! @");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);
+    }
+}

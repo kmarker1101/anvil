@@ -1151,11 +1151,14 @@ TEST_BOTH_MODES("EXECUTE primitive", "[primitives][execute]", {
 
     // Define ExecutionContext struct type
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
+    ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
     StructType* ctx_type = StructType::create(context, {
-        stack_array_type,      // data_stack
-        stack_array_type,      // return_stack
-        builder.getInt64Ty(),  // dsp
-        builder.getInt64Ty()   // rsp
+        stack_array_type,       // data_stack
+        stack_array_type,       // return_stack
+        data_space_array_type,  // data_space
+        builder.getInt64Ty(),   // dsp
+        builder.getInt64Ty(),   // rsp
+        builder.getInt64Ty()    // here
     }, "ExecutionContext");
 
     // Create a helper function that we'll execute
@@ -1180,7 +1183,7 @@ TEST_BOTH_MODES("EXECUTE primitive", "[primitives][execute]", {
 
     Value* helper_ctx_ptr = helper_func->getArg(0);
     Value* helper_data_stack_ptr = builder.CreateStructGEP(ctx_type, helper_ctx_ptr, 0, "data_stack_ptr");
-    Value* helper_dsp_ptr = builder.CreateStructGEP(ctx_type, helper_ctx_ptr, 2, "dsp_ptr");
+    Value* helper_dsp_ptr = builder.CreateStructGEP(ctx_type, helper_ctx_ptr, 3, "dsp_ptr");
 
     // Push literal 10
     emit_lit(builder, helper_data_stack_ptr, helper_dsp_ptr, 10);
@@ -1209,7 +1212,7 @@ TEST_BOTH_MODES("EXECUTE primitive", "[primitives][execute]", {
 
     Value* main_ctx_ptr = main_func->getArg(0);
     Value* main_data_stack_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 0, "data_stack_ptr");
-    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 2, "dsp_ptr");
+    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 3, "dsp_ptr");
 
     // Push initial value 32
     emit_lit(builder, main_data_stack_ptr, main_dsp_ptr, 32);
@@ -1279,11 +1282,14 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
 
     // Define ExecutionContext struct type
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
+    ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
     StructType* ctx_type = StructType::create(context, {
-        stack_array_type,      // data_stack
-        stack_array_type,      // return_stack
-        builder.getInt64Ty(),  // dsp
-        builder.getInt64Ty()   // rsp
+        stack_array_type,       // data_stack
+        stack_array_type,       // return_stack
+        data_space_array_type,  // data_space
+        builder.getInt64Ty(),   // dsp
+        builder.getInt64Ty(),   // rsp
+        builder.getInt64Ty()    // here
     }, "ExecutionContext");
 
     Type* ctx_ptr_type = PointerType::get(context, 0);
@@ -1308,7 +1314,7 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
 
     Value* dup_ctx_ptr = dup_func->getArg(0);
     Value* dup_data_stack_ptr = builder.CreateStructGEP(ctx_type, dup_ctx_ptr, 0, "data_stack_ptr");
-    Value* dup_dsp_ptr = builder.CreateStructGEP(ctx_type, dup_ctx_ptr, 2, "dsp_ptr");
+    Value* dup_dsp_ptr = builder.CreateStructGEP(ctx_type, dup_ctx_ptr, 3, "dsp_ptr");
 
     emit_dup(builder, dup_data_stack_ptr, dup_dsp_ptr);
     builder.CreateRetVoid();
@@ -1326,7 +1332,7 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
 
     Value* add_ctx_ptr = add_func->getArg(0);
     Value* add_data_stack_ptr = builder.CreateStructGEP(ctx_type, add_ctx_ptr, 0, "data_stack_ptr");
-    Value* add_dsp_ptr = builder.CreateStructGEP(ctx_type, add_ctx_ptr, 2, "dsp_ptr");
+    Value* add_dsp_ptr = builder.CreateStructGEP(ctx_type, add_ctx_ptr, 3, "dsp_ptr");
 
     emit_add(builder, add_data_stack_ptr, add_dsp_ptr);
     builder.CreateRetVoid();
@@ -1350,7 +1356,7 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
 
     Value* main_ctx_ptr = main_func->getArg(0);
     Value* main_data_stack_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 0, "data_stack_ptr");
-    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 2, "dsp_ptr");
+    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 3, "dsp_ptr");
 
     // Push initial value 5
     emit_lit(builder, main_data_stack_ptr, main_dsp_ptr, 5);
@@ -1413,4 +1419,345 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
     // Check result: 5 DUP + = 10
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == 10);
+})
+
+// ============================================================================
+// Memory Allocation Primitives (HERE, ALLOT, ,)
+// ============================================================================
+
+TEST_BOTH_MODES("HERE returns data space address", "[primitives][here]", {
+    using namespace llvm;
+
+    initialize_llvm_once();
+
+    LLVMContext context;
+    auto module = std::make_unique<Module>("test_here", context);
+    IRBuilder<> builder(context);
+
+    Type* ctx_ptr_type = PointerType::get(context, 0);
+    FunctionType* func_type = FunctionType::get(
+        builder.getVoidTy(),
+        {ctx_ptr_type},
+        false
+    );
+
+    Function* func = Function::Create(
+        func_type,
+        Function::ExternalLinkage,
+        "test_here",
+        module.get()
+    );
+
+    BasicBlock* entry = BasicBlock::Create(context, "entry", func);
+    builder.SetInsertPoint(entry);
+
+    Value* ctx_ptr = func->getArg(0);
+
+    ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
+    ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    StructType* ctx_type = StructType::create(context, {
+        stack_array_type,
+        stack_array_type,
+        data_space_array_type,
+        builder.getInt64Ty(),
+        builder.getInt64Ty(),
+        builder.getInt64Ty()
+    }, "ExecutionContext");
+
+    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
+    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 5, "here_ptr");
+
+    // Execute HERE primitive
+    emit_here(builder, data_stack_ptr, dsp_ptr, data_space_ptr, here_ptr);
+
+    builder.CreateRetVoid();
+
+    std::string error_str;
+    raw_string_ostream error_stream(error_str);
+    if (verifyFunction(*func, &error_stream)) {
+        throw std::runtime_error("Function verification failed: " + error_str);
+    }
+
+    std::string engine_error;
+    AnvilExecutionEngine* engine = AnvilExecutionEngine::create(
+        std::move(module), mode, &engine_error);
+
+    if (!engine) {
+        throw std::runtime_error("Failed to create execution engine: " + engine_error);
+    }
+
+    ExecutionContext ctx;
+    engine->execute(func, &ctx);
+    delete engine;
+
+    // Check that HERE pushed an address
+    REQUIRE(ctx.dsp == 1);
+    // The address should point to data_space[0]
+    uint64_t expected_addr = reinterpret_cast<uint64_t>(&ctx.data_space[0]);
+    REQUIRE(ctx.data_stack[0] == expected_addr);
+})
+
+TEST_BOTH_MODES("ALLOT advances HERE pointer", "[primitives][allot]", {
+    using namespace llvm;
+
+    initialize_llvm_once();
+
+    LLVMContext context;
+    auto module = std::make_unique<Module>("test_allot", context);
+    IRBuilder<> builder(context);
+
+    Type* ctx_ptr_type = PointerType::get(context, 0);
+    FunctionType* func_type = FunctionType::get(
+        builder.getVoidTy(),
+        {ctx_ptr_type},
+        false
+    );
+
+    Function* func = Function::Create(
+        func_type,
+        Function::ExternalLinkage,
+        "test_allot",
+        module.get()
+    );
+
+    BasicBlock* entry = BasicBlock::Create(context, "entry", func);
+    builder.SetInsertPoint(entry);
+
+    Value* ctx_ptr = func->getArg(0);
+
+    ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
+    ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    StructType* ctx_type = StructType::create(context, {
+        stack_array_type,
+        stack_array_type,
+        data_space_array_type,
+        builder.getInt64Ty(),
+        builder.getInt64Ty(),
+        builder.getInt64Ty()
+    }, "ExecutionContext");
+
+    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
+    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 5, "here_ptr");
+
+    // Push 16 onto stack, then ALLOT
+    push_values(builder, data_stack_ptr, dsp_ptr, {16});
+    emit_allot(builder, data_stack_ptr, dsp_ptr, here_ptr);
+
+    // Push another 24, then ALLOT again
+    push_values(builder, data_stack_ptr, dsp_ptr, {24});
+    emit_allot(builder, data_stack_ptr, dsp_ptr, here_ptr);
+
+    // Call HERE to see the final address
+    emit_here(builder, data_stack_ptr, dsp_ptr, data_space_ptr, here_ptr);
+
+    builder.CreateRetVoid();
+
+    std::string error_str;
+    raw_string_ostream error_stream(error_str);
+    if (verifyFunction(*func, &error_stream)) {
+        throw std::runtime_error("Function verification failed: " + error_str);
+    }
+
+    std::string engine_error;
+    AnvilExecutionEngine* engine = AnvilExecutionEngine::create(
+        std::move(module), mode, &engine_error);
+
+    if (!engine) {
+        throw std::runtime_error("Failed to create execution engine: " + engine_error);
+    }
+
+    ExecutionContext ctx;
+    engine->execute(func, &ctx);
+    delete engine;
+
+    // Stack should have the HERE value
+    REQUIRE(ctx.dsp == 1);
+    // HERE should point to data_space[40] (16 + 24)
+    uint64_t expected_addr = reinterpret_cast<uint64_t>(&ctx.data_space[40]);
+    REQUIRE(ctx.data_stack[0] == expected_addr);
+    REQUIRE(ctx.here == 40);
+})
+
+TEST_BOTH_MODES("Comma stores value and advances HERE", "[primitives][comma]", {
+    using namespace llvm;
+
+    initialize_llvm_once();
+
+    LLVMContext context;
+    auto module = std::make_unique<Module>("test_comma", context);
+    IRBuilder<> builder(context);
+
+    Type* ctx_ptr_type = PointerType::get(context, 0);
+    FunctionType* func_type = FunctionType::get(
+        builder.getVoidTy(),
+        {ctx_ptr_type},
+        false
+    );
+
+    Function* func = Function::Create(
+        func_type,
+        Function::ExternalLinkage,
+        "test_comma",
+        module.get()
+    );
+
+    BasicBlock* entry = BasicBlock::Create(context, "entry", func);
+    builder.SetInsertPoint(entry);
+
+    Value* ctx_ptr = func->getArg(0);
+
+    ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
+    ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    StructType* ctx_type = StructType::create(context, {
+        stack_array_type,
+        stack_array_type,
+        data_space_array_type,
+        builder.getInt64Ty(),
+        builder.getInt64Ty(),
+        builder.getInt64Ty()
+    }, "ExecutionContext");
+
+    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
+    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 5, "here_ptr");
+
+    // Store value 42 using comma
+    push_values(builder, data_stack_ptr, dsp_ptr, {42});
+    emit_comma(builder, data_stack_ptr, dsp_ptr, data_space_ptr, here_ptr);
+
+    // Store value 123 using comma
+    push_values(builder, data_stack_ptr, dsp_ptr, {123});
+    emit_comma(builder, data_stack_ptr, dsp_ptr, data_space_ptr, here_ptr);
+
+    // Check HERE to verify it advanced by 16 bytes (2 cells)
+    emit_here(builder, data_stack_ptr, dsp_ptr, data_space_ptr, here_ptr);
+
+    builder.CreateRetVoid();
+
+    std::string error_str;
+    raw_string_ostream error_stream(error_str);
+    if (verifyFunction(*func, &error_stream)) {
+        throw std::runtime_error("Function verification failed: " + error_str);
+    }
+
+    std::string engine_error;
+    AnvilExecutionEngine* engine = AnvilExecutionEngine::create(
+        std::move(module), mode, &engine_error);
+
+    if (!engine) {
+        throw std::runtime_error("Failed to create execution engine: " + engine_error);
+    }
+
+    ExecutionContext ctx;
+    engine->execute(func, &ctx);
+    delete engine;
+
+    // Check HERE advanced by 16 bytes (2 * 8)
+    REQUIRE(ctx.here == 16);
+    REQUIRE(ctx.dsp == 1);
+    uint64_t expected_addr = reinterpret_cast<uint64_t>(&ctx.data_space[16]);
+    REQUIRE(ctx.data_stack[0] == expected_addr);
+
+    // Check values were stored correctly
+    int64_t* data_as_cells = reinterpret_cast<int64_t*>(ctx.data_space);
+    REQUIRE(data_as_cells[0] == 42);
+    REQUIRE(data_as_cells[1] == 123);
+})
+
+TEST_BOTH_MODES("Memory allocation workflow", "[primitives][memory]", {
+    using namespace llvm;
+
+    initialize_llvm_once();
+
+    LLVMContext context;
+    auto module = std::make_unique<Module>("test_memory_workflow", context);
+    IRBuilder<> builder(context);
+
+    Type* ctx_ptr_type = PointerType::get(context, 0);
+    FunctionType* func_type = FunctionType::get(
+        builder.getVoidTy(),
+        {ctx_ptr_type},
+        false
+    );
+
+    Function* func = Function::Create(
+        func_type,
+        Function::ExternalLinkage,
+        "test_memory_workflow",
+        module.get()
+    );
+
+    BasicBlock* entry = BasicBlock::Create(context, "entry", func);
+    builder.SetInsertPoint(entry);
+
+    Value* ctx_ptr = func->getArg(0);
+
+    ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
+    ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    StructType* ctx_type = StructType::create(context, {
+        stack_array_type,
+        stack_array_type,
+        data_space_array_type,
+        builder.getInt64Ty(),
+        builder.getInt64Ty(),
+        builder.getInt64Ty()
+    }, "ExecutionContext");
+
+    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
+    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 5, "here_ptr");
+
+    // Store value 999 at current HERE
+    push_values(builder, data_stack_ptr, dsp_ptr, {999});
+    emit_comma(builder, data_stack_ptr, dsp_ptr, data_space_ptr, here_ptr);
+
+    // Allocate 96 bytes (to keep alignment)
+    push_values(builder, data_stack_ptr, dsp_ptr, {96});
+    emit_allot(builder, data_stack_ptr, dsp_ptr, here_ptr);
+
+    // Store value 777 at new HERE
+    push_values(builder, data_stack_ptr, dsp_ptr, {777});
+    emit_comma(builder, data_stack_ptr, dsp_ptr, data_space_ptr, here_ptr);
+
+    // Get final HERE
+    emit_here(builder, data_stack_ptr, dsp_ptr, data_space_ptr, here_ptr);
+
+    builder.CreateRetVoid();
+
+    std::string error_str;
+    raw_string_ostream error_stream(error_str);
+    if (verifyFunction(*func, &error_stream)) {
+        throw std::runtime_error("Function verification failed: " + error_str);
+    }
+
+    std::string engine_error;
+    AnvilExecutionEngine* engine = AnvilExecutionEngine::create(
+        std::move(module), mode, &engine_error);
+
+    if (!engine) {
+        throw std::runtime_error("Failed to create execution engine: " + engine_error);
+    }
+
+    ExecutionContext ctx;
+    engine->execute(func, &ctx);
+    delete engine;
+
+    // HERE should be at 8 + 96 + 8 = 112
+    REQUIRE(ctx.here == 112);
+
+    // Stack should have final HERE address
+    REQUIRE(ctx.dsp == 1);
+    uint64_t expected_final = reinterpret_cast<uint64_t>(&ctx.data_space[112]);
+    REQUIRE(ctx.data_stack[0] == expected_final);
+
+    // Check stored values
+    int64_t* data_as_cells = reinterpret_cast<int64_t*>(ctx.data_space);
+    REQUIRE(data_as_cells[0] == 999);
+    REQUIRE(data_as_cells[13] == 777);  // (8 + 96) / 8 = 13
 })

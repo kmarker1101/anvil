@@ -887,6 +887,81 @@ inline void emit_j(llvm::IRBuilder<> &builder,
   store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, outer_loop_index);
 }
 
+// Emit LLVM IR for the HERE primitive
+// Stack effect: ( -- addr )
+// Pushes the address of the next free byte in data space
+inline void emit_here(llvm::IRBuilder<> &builder,
+                      llvm::Value *data_stack_ptr,
+                      llvm::Value *dsp_ptr,
+                      llvm::Value *data_space_ptr,
+                      llvm::Value *here_ptr) {
+  // Load current HERE value
+  llvm::Value *here = builder.CreateLoad(builder.getInt64Ty(), here_ptr, "here");
+
+  // Calculate absolute address: data_space_ptr + here
+  llvm::Type *i8_ptr_type = llvm::PointerType::get(builder.getContext(), 0);
+  llvm::Value *data_space_i8 = builder.CreateBitCast(data_space_ptr, i8_ptr_type, "data_space_i8");
+  llvm::Value *addr_ptr = builder.CreateGEP(builder.getInt8Ty(), data_space_i8, here, "addr_ptr");
+  llvm::Value *addr = builder.CreatePtrToInt(addr_ptr, builder.getInt64Ty(), "addr");
+
+  // Push address to data stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, addr);
+}
+
+// Emit LLVM IR for the ALLOT primitive
+// Stack effect: ( n -- )
+// Allocates n bytes in data space
+inline void emit_allot(llvm::IRBuilder<> &builder,
+                       llvm::Value *data_stack_ptr,
+                       llvm::Value *dsp_ptr,
+                       llvm::Value *here_ptr) {
+  // Pop n from stack
+  llvm::Value *n = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  adjust_dsp(builder, dsp_ptr, -1);
+
+  // Load current HERE
+  llvm::Value *here = builder.CreateLoad(builder.getInt64Ty(), here_ptr, "here");
+
+  // Add n to HERE
+  llvm::Value *new_here = builder.CreateAdd(here, n, "new_here");
+
+  // Store new HERE
+  builder.CreateStore(new_here, here_ptr);
+}
+
+// Emit LLVM IR for the , (comma) primitive
+// Stack effect: ( n -- )
+// Stores n at HERE and advances HERE by one cell (8 bytes)
+inline void emit_comma(llvm::IRBuilder<> &builder,
+                       llvm::Value *data_stack_ptr,
+                       llvm::Value *dsp_ptr,
+                       llvm::Value *data_space_ptr,
+                       llvm::Value *here_ptr) {
+  // Pop value from stack
+  llvm::Value *value = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  adjust_dsp(builder, dsp_ptr, -1);
+
+  // Load current HERE
+  llvm::Value *here = builder.CreateLoad(builder.getInt64Ty(), here_ptr, "here");
+
+  // Calculate address: data_space_ptr + here
+  llvm::Type *i8_ptr_type = llvm::PointerType::get(builder.getContext(), 0);
+  llvm::Value *data_space_i8 = builder.CreateBitCast(data_space_ptr, i8_ptr_type, "data_space_i8");
+  llvm::Value *addr_ptr = builder.CreateGEP(builder.getInt8Ty(), data_space_i8, here, "addr_ptr");
+
+  // Cast to i64* for storing
+  llvm::Type *i64_ptr_type = llvm::PointerType::get(builder.getContext(), 0);
+  llvm::Value *addr_i64 = builder.CreateBitCast(addr_ptr, i64_ptr_type, "addr_i64");
+
+  // Store value at address
+  builder.CreateStore(value, addr_i64);
+
+  // Advance HERE by 8 bytes (one cell)
+  llvm::Value *new_here = builder.CreateAdd(here, builder.getInt64(8), "new_here");
+  builder.CreateStore(new_here, here_ptr);
+}
+
 } // namespace anvil
 
 #endif // ANVIL_PRIMITIVES_H

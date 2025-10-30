@@ -237,7 +237,9 @@ enum class ASTNodeType {
     BEGIN_UNTIL,          // BEGIN ... UNTIL
     BEGIN_WHILE_REPEAT,   // BEGIN ... WHILE ... REPEAT
     DO_LOOP,              // DO ... LOOP (and +LOOP)
-    STRING_LITERAL        // String literal
+    STRING_LITERAL,       // String literal
+    VARIABLE,             // VARIABLE name
+    CONSTANT              // CONSTANT name value
 };
 ```
 
@@ -365,6 +367,96 @@ void emit_to_r(IRBuilder<>& builder,
 - Optional bounds checking in primitives
 - Stack depth tracking for optimization
 
+### Variables and Constants
+
+Anvil provides `VARIABLE` and `CONSTANT` as compile-time primitives that create named storage and values.
+
+**VARIABLE Implementation:**
+
+`VARIABLE` allocates storage at compile time in the data space and creates a word that pushes the variable's address:
+
+```forth
+VARIABLE X      \ Allocates 8 bytes, creates word X
+42 X !          \ Store 42 at address X
+X @             \ Fetch value from X (returns 42)
+```
+
+**Implementation details:**
+- Each variable allocates exactly 8 bytes (one 64-bit cell)
+- Address is computed at compile time using `compile_time_here_` tracking
+- The created word generates LLVM IR to compute: `data_space + offset`
+- Variables maintain fixed addresses throughout execution
+- Multiple variables get sequential addresses in data space
+
+**CONSTANT Implementation:**
+
+`CONSTANT` creates a word that pushes a literal value directly:
+
+```forth
+CONSTANT PI 314     \ Creates word PI that pushes 314
+PI                  \ Stack: 314
+PI PI *             \ Stack: 98596 (314 * 314)
+```
+
+**Implementation details:**
+- Value is embedded directly in LLVM IR as a literal
+- No data space allocation (value lives in code)
+- Extremely efficient - just pushes immediate value
+- Syntax: `CONSTANT name value` (non-standard but compile-friendly)
+- Standard Forth uses `value CONSTANT name` but requires runtime evaluation
+
+**Usage Examples:**
+
+```forth
+\ Counter with variable
+VARIABLE counter
+0 counter !
+counter @ 1 + counter !   \ Increment
+counter @ .               \ Print: 1
+
+\ Multiple variables
+VARIABLE X
+VARIABLE Y
+10 X !
+20 Y !
+X @ Y @ + .              \ Print: 30
+
+\ Constants in calculations
+CONSTANT WIDTH 80
+CONSTANT HEIGHT 24
+WIDTH HEIGHT * .         \ Print: 1920 (total cells)
+
+\ Mix variables and constants
+VARIABLE temperature
+CONSTANT FREEZING 32
+70 temperature !
+temperature @ FREEZING - .  \ Print: 38 (degrees above freezing)
+```
+
+**Memory Layout:**
+
+```
+Data Space:
+┌─────────────┬─────────────┬─────────────┬─────────────┐
+│  Variable 1 │  Variable 2 │  Variable 3 │   (unused)  │
+│   (8 bytes) │   (8 bytes) │   (8 bytes) │             │
+└─────────────┴─────────────┴─────────────┴─────────────┘
+      ↑              ↑              ↑
+   offset=0      offset=8      offset=16
+
+Constants: No memory allocation (values in IR)
+```
+
+**Why These Are Primitives:**
+
+VARIABLE and CONSTANT require compile-time behavior:
+- Need to allocate storage during compilation, not execution
+- Must create new dictionary entries
+- Generate LLVM IR for the created words
+- Cannot be implemented using existing primitives
+
+In standard Forth, these would use `CREATE` and `DOES>`, but we haven't implemented those meta-programming features yet. These primitive implementations provide the core functionality needed for data storage and named constants.
+
 ### Testing Strategy
 
 Every feature must be tested in all three modes:
@@ -484,7 +576,7 @@ struct Word {
 
 ## Primitive Word Set
 
-Currently implemented: **30 primitives**
+Currently implemented: **32 primitives**
 
 **Data Stack Operations:**
 - `DUP`, `DROP`, `SWAP`, `OVER`, `ROT`
@@ -501,6 +593,13 @@ Currently implemented: **30 primitives**
 **Memory Access:**
 - `@`, `!` - 64-bit load/store
 - `C@`, `C!` - 8-bit load/store
+- `HERE` - Get current data space pointer
+- `ALLOT` - Allocate space in data space
+- `,` - Store value and advance HERE
+
+**Variables and Constants:**
+- `VARIABLE` - Create a variable (allocates 8 bytes, word pushes address)
+- `CONSTANT` - Create a constant (word pushes literal value)
 
 **Return Stack Operations:**
 - `>R` - Move top of data stack to return stack
@@ -586,7 +685,7 @@ Once primitives work, define everything else in Forth. These definitions are add
 1. **Additional stack words:** `2DUP`, `NIP`, `TUCK`, `2SWAP`, `-ROT`, etc.
 2. **Control structures:** `IF...THEN`, `BEGIN...UNTIL`, `DO...LOOP`, `WHILE...REPEAT`
 3. **Compiler words:** `:`, `;`, `IMMEDIATE`, `[`, `]`, `LITERAL`
-4. **Dictionary management:** `CREATE`, `DOES>`, `CONSTANT`, `VARIABLE`, `ALLOT`
+4. **Dictionary management:** `CREATE`, `DOES>` (future work)
 5. **String/parsing:** `WORD`, `PARSE`, `S"`, `CHAR`
 6. **Extended arithmetic:** `2*`, `2/`, `<=`, `>=`, `<>`, `ABS`, `MIN`, `MAX`
 7. **Return stack utilities:** Using `>R` and `R>` for temporary storage patterns
@@ -729,7 +828,7 @@ make test
 ```
 
 **Test Coverage:**
-- 148 total tests, all passing (100%)
+- 169 total tests, all passing (100%)
 - All primitive tests run in both JIT and Interpreter modes automatically
 - Stdlib words tested in both modes
 - Ensures semantic consistency across execution modes
@@ -739,6 +838,7 @@ make test
 - `tests/test_compiler.cpp` - Compiler and high-level features (JIT mode)
 - `tests/test_interpreter.cpp` - Interpreter-specific tests
 - `tests/test_stdlib.cpp` - Standard library words (both modes)
+- `tests/test_variables.cpp` - VARIABLE and CONSTANT tests
 - `tests/test_parser.cpp` - Tokenization and parsing
 - `tests/test_ast.cpp` - AST building
 - `tests/test_dictionary.cpp` - Dictionary operations

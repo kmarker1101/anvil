@@ -25,7 +25,9 @@ enum class ASTNodeType {
     BEGIN_WHILE_REPEAT, // BEGIN ... WHILE ... REPEAT
     DO_LOOP,        // DO ... LOOP
     DO_PLUS_LOOP,   // DO ... +LOOP
-    STRING_LITERAL  // String literal for S" or ."
+    STRING_LITERAL, // String literal for S" or ."
+    VARIABLE,       // VARIABLE name - creates a variable
+    CONSTANT        // CONSTANT name - creates a constant
 };
 
 // Base AST node
@@ -71,6 +73,26 @@ struct DefinitionNode : public ASTNode {
 
     DefinitionNode(const std::string& word_name, ASTNodePtr word_body)
         : ASTNode(ASTNodeType::DEFINITION), name(word_name), body(std::move(word_body)) {}
+};
+
+// Variable node: VARIABLE name
+// Creates a word that pushes its address when called
+struct VariableNode : public ASTNode {
+    std::string name;
+
+    VariableNode(const std::string& var_name)
+        : ASTNode(ASTNodeType::VARIABLE), name(var_name) {}
+};
+
+// Constant node: CONSTANT name
+// Creates a word that pushes a constant value when called
+// The value must be a literal that precedes CONSTANT in the parse
+struct ConstantNode : public ASTNode {
+    std::string name;
+    int64_t value;  // The constant value
+
+    ConstantNode(const std::string& const_name, int64_t const_value)
+        : ASTNode(ASTNodeType::CONSTANT), name(const_name), value(const_value) {}
 };
 
 // IF...THEN node (no else)
@@ -200,6 +222,10 @@ private:
             // Check for control structure keywords
             if (match_word(":")) {
                 return parse_definition();
+            } else if (match_word("VARIABLE")) {
+                return parse_variable();
+            } else if (match_word("CONSTANT")) {
+                return parse_constant();
             } else if (match_word("IF")) {
                 return parse_if();
             } else if (match_word("BEGIN")) {
@@ -240,6 +266,43 @@ private:
         expect_word(";");
 
         return std::make_unique<DefinitionNode>(name, std::move(body));
+    }
+
+    // Parse VARIABLE name
+    ASTNodePtr parse_variable() {
+        expect_word("VARIABLE");
+
+        if (at_end() || peek().type != TokenType::WORD) {
+            throw std::runtime_error("Expected variable name after 'VARIABLE'");
+        }
+
+        std::string name = peek().text;
+        advance();
+
+        return std::make_unique<VariableNode>(name);
+    }
+
+    // Parse CONSTANT name value
+    // Syntax: CONSTANT name value
+    // This is non-standard but simpler for our compile-only architecture
+    ASTNodePtr parse_constant() {
+        expect_word("CONSTANT");
+
+        if (at_end() || peek().type != TokenType::WORD) {
+            throw std::runtime_error("Expected constant name after 'CONSTANT'");
+        }
+
+        std::string name = peek().text;
+        advance();
+
+        if (at_end() || peek().type != TokenType::NUMBER) {
+            throw std::runtime_error("Expected number value after constant name");
+        }
+
+        int64_t value = peek().number_value;
+        advance();
+
+        return std::make_unique<ConstantNode>(name, value);
     }
 
     // Parse IF...THEN or IF...ELSE...THEN
