@@ -14,3 +14,11 @@
 : CELLS ( n -- n*8 ) 8 * ;     \ Convert cell count to byte count
 : CELL+ ( addr -- addr+8 ) 8 + ; \ Add one cell to address
 : +! ( n addr -- ) DUP @ ROT + SWAP ! ; \ Add to memory location
+
+\ Output helpers
+CONSTANT BL 32              \ BL is the space character (ASCII 32)
+: SPACE ( -- ) BL EMIT ;    \ Output a single space
+: SPACES ( n -- )           \ Output n spaces
+    BEGIN DUP WHILE
+        SPACE 1 -
+    REPEAT DROP ;

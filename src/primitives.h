@@ -837,6 +837,41 @@ inline void emit_dot(llvm::IRBuilder<> &builder,
   // Continue in normal_block - next primitive will add instructions here
 }
 
+// Emit LLVM IR for the EMIT primitive
+// Stack effect: ( c -- )
+// Pops a character code and outputs the character
+inline void emit_emit(llvm::IRBuilder<> &builder,
+                      llvm::Value *data_stack_ptr,
+                      llvm::Value *dsp_ptr) {
+  llvm::Module *module = builder.GetInsertBlock()->getModule();
+
+  // Get putchar function (more efficient than printf for single char)
+  llvm::FunctionType *putchar_type = llvm::FunctionType::get(
+      builder.getInt32Ty(),
+      {builder.getInt32Ty()},
+      false);
+  llvm::FunctionCallee putchar_func = module->getOrInsertFunction("putchar", putchar_type);
+
+  // Pop character code from stack
+  llvm::Value *char_code = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  adjust_dsp(builder, dsp_ptr, -1);
+
+  // Truncate to 32-bit int for putchar (it takes int, not char)
+  llvm::Value *char_code_i32 = builder.CreateTrunc(char_code, builder.getInt32Ty(), "char_i32");
+
+  // Call putchar
+  builder.CreateCall(putchar_func, {char_code_i32});
+
+  // Flush stdout to ensure output appears immediately
+  llvm::FunctionType *fflush_type = llvm::FunctionType::get(
+      builder.getInt32Ty(),
+      {llvm::PointerType::get(builder.getContext(), 0)},
+      false);
+  llvm::FunctionCallee fflush_func = module->getOrInsertFunction("fflush", fflush_type);
+  builder.CreateCall(fflush_func, {llvm::ConstantPointerNull::get(
+      llvm::PointerType::get(builder.getContext(), 0))});
+}
+
 // Emit LLVM IR for the CR primitive (carriage return)
 // Stack effect: ( -- )
 // Prints a newline character

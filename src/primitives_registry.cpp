@@ -136,6 +136,10 @@ void initialize_primitives() {
         emit_dot(builder, data_stack, dsp);
     });
 
+    global_primitives.register_primitive("EMIT", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto) {
+        emit_emit(builder, data_stack, dsp);
+    });
+
     global_primitives.register_primitive("CR", [](auto& builder, auto, auto, auto, auto, auto, auto) {
         emit_cr(builder);
     });

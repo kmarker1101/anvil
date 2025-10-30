@@ -81,6 +81,7 @@ add_executable(anvil_tests
     tests/test_interpreter.cpp
     tests/test_stdlib.cpp
     tests/test_variables.cpp
+    tests/test_emit.cpp
     src/dictionary.cpp
     src/primitives_registry.cpp
 )

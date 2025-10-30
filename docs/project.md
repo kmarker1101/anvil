@@ -576,7 +576,7 @@ struct Word {
 
 ## Primitive Word Set
 
-Currently implemented: **32 primitives**
+Currently implemented: **33 primitives**
 
 **Data Stack Operations:**
 - `DUP`, `DROP`, `SWAP`, `OVER`, `ROT`
@@ -612,7 +612,8 @@ Currently implemented: **32 primitives**
 - `J` - Outer loop index (for nested loops)
 
 **I/O Operations:**
-- `.` - Print top of stack
+- `.` - Print top of stack as number
+- `EMIT` - Output single character (ASCII code from stack)
 - `CR` - Print newline
 - `TYPE` - Print string
 
@@ -828,7 +829,7 @@ make test
 ```
 
 **Test Coverage:**
-- 169 total tests, all passing (100%)
+- 175 total tests, all passing (100%)
 - All primitive tests run in both JIT and Interpreter modes automatically
 - Stdlib words tested in both modes
 - Ensures semantic consistency across execution modes
@@ -839,6 +840,7 @@ make test
 - `tests/test_interpreter.cpp` - Interpreter-specific tests
 - `tests/test_stdlib.cpp` - Standard library words (both modes)
 - `tests/test_variables.cpp` - VARIABLE and CONSTANT tests
+- `tests/test_emit.cpp` - EMIT primitive tests
 - `tests/test_parser.cpp` - Tokenization and parsing
 - `tests/test_ast.cpp` - AST building
 - `tests/test_dictionary.cpp` - Dictionary operations
@@ -861,13 +863,26 @@ Anvil automatically loads a standard library (`stdlib.fth`) at startup, providin
 - `NIP ( a b -- b )` - Drop second item
 - `TUCK ( a b -- b a b )` - Copy top item under second
 - `2DROP ( a b -- )` - Drop top two items
+- `NEGATE ( n -- -n )` - Negate number
+- `ABS ( n -- +n )` - Absolute value
+- `OVER ( a b -- a b a )` - Copy second item to top
+- `CELLS ( n -- n*8 )` - Convert cell count to byte count
+- `CELL+ ( addr -- addr+8 )` - Add one cell to address
+- `+! ( n addr -- )` - Add to memory location
+- `BL ( -- 32 )` - Push space character code (constant)
+- `SPACE ( -- )` - Output a single space
+- `SPACES ( n -- )` - Output n spaces
 
 The standard library is compiled to LLVM IR and added to the global dictionary, making these words available immediately in the REPL and in all execution modes (JIT, interpreter, and AOT).
 
 **Example:**
 ```forth
-5 3 NIP .     \ Output: 3
-5 10 TUCK . . .  \ Output: 10 5 10
+5 3 NIP .         \ Output: 3
+5 10 TUCK . . .   \ Output: 10 5 10
+65 EMIT           \ Output: A
+BL EMIT           \ Output: " " (space)
+SPACE             \ Output: " " (space)
+5 SPACES 72 EMIT  \ Output: "     H"
 ```
 
 ### Comments
