@@ -768,6 +768,13 @@ inline void emit_dot(llvm::IRBuilder<> &builder,
   llvm::Module *module = builder.GetInsertBlock()->getModule();
   llvm::Function *current_function = builder.GetInsertBlock()->getParent();
 
+  // Get printf function
+  llvm::FunctionType *printf_type = llvm::FunctionType::get(
+      builder.getInt32Ty(),
+      {llvm::PointerType::get(builder.getContext(), 0)},
+      true); // variadic
+  llvm::FunctionCallee printf_func = module->getOrInsertFunction("printf", printf_type);
+
   // Check for stack underflow
   llvm::Value *dsp = builder.CreateLoad(builder.getInt64Ty(), dsp_ptr, "dsp");
   llvm::Value *is_empty = builder.CreateICmpEQ(dsp, builder.getInt64(0), "is_empty");
@@ -781,17 +788,16 @@ inline void emit_dot(llvm::IRBuilder<> &builder,
 
   // Underflow block - print error and return
   builder.SetInsertPoint(underflow_block);
-  llvm::FunctionType *printf_type = llvm::FunctionType::get(
-      builder.getInt32Ty(),
-      {llvm::PointerType::get(builder.getContext(), 0)},
-      true); // variadic
-  llvm::FunctionCallee printf_func = module->getOrInsertFunction("printf", printf_type);
 
-  llvm::Constant *error_str = llvm::ConstantDataArray::getString(
-      builder.getContext(), "Stack underflow\n", false);
-  llvm::GlobalVariable *error_global = new llvm::GlobalVariable(
-      *module, error_str->getType(), true,
-      llvm::GlobalValue::PrivateLinkage, error_str, ".underflow_msg");
+  // Get or create underflow error string (shared)
+  llvm::GlobalVariable *error_global = module->getGlobalVariable(".underflow_msg", true);
+  if (!error_global) {
+    llvm::Constant *error_str = llvm::ConstantDataArray::getString(
+        builder.getContext(), "Stack underflow\n", false);
+    error_global = new llvm::GlobalVariable(
+        *module, error_str->getType(), true,
+        llvm::GlobalValue::PrivateLinkage, error_str, ".underflow_msg");
+  }
   llvm::Value *error_ptr = builder.CreateBitCast(error_global,
       llvm::PointerType::get(builder.getContext(), 0), "error_ptr");
   builder.CreateCall(printf_func, {error_ptr});
@@ -804,19 +810,50 @@ inline void emit_dot(llvm::IRBuilder<> &builder,
   llvm::Value *value = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
   adjust_dsp(builder, dsp_ptr, -1);
 
-  // Create format string "%lld " (print as signed 64-bit int with trailing space)
-  llvm::Constant *format_str = llvm::ConstantDataArray::getString(
-      builder.getContext(), "%lld ", false);
-  llvm::GlobalVariable *format_global = new llvm::GlobalVariable(
-      *module, format_str->getType(), true,
-      llvm::GlobalValue::PrivateLinkage, format_str, ".dot_fmt");
+  // Get or create format string "%lld " (shared across all . calls)
+  llvm::GlobalVariable *format_global = module->getGlobalVariable(".dot_fmt", true);
+  if (!format_global) {
+    llvm::Constant *format_str = llvm::ConstantDataArray::getString(
+        builder.getContext(), "%lld ", false);
+    format_global = new llvm::GlobalVariable(
+        *module, format_str->getType(), true,
+        llvm::GlobalValue::PrivateLinkage, format_str, ".dot_fmt");
+  }
   llvm::Value *format_ptr = builder.CreateBitCast(format_global,
       llvm::PointerType::get(builder.getContext(), 0), "format_ptr");
 
   // Call printf
   builder.CreateCall(printf_func, {format_ptr, value});
 
-  // Flush stdout to ensure output appears immediately (important for interpreter mode)
+  // Flush stdout to ensure output appears immediately
+  llvm::FunctionType *fflush_type = llvm::FunctionType::get(
+      builder.getInt32Ty(),
+      {llvm::PointerType::get(builder.getContext(), 0)},
+      false);
+  llvm::FunctionCallee fflush_func = module->getOrInsertFunction("fflush", fflush_type);
+  builder.CreateCall(fflush_func, {llvm::ConstantPointerNull::get(
+      llvm::PointerType::get(builder.getContext(), 0))});
+
+  // Continue in normal_block - next primitive will add instructions here
+}
+
+// Emit LLVM IR for the CR primitive (carriage return)
+// Stack effect: ( -- )
+// Prints a newline character
+inline void emit_cr(llvm::IRBuilder<> &builder) {
+  llvm::Module *module = builder.GetInsertBlock()->getModule();
+
+  // Get putchar function
+  llvm::FunctionType *putchar_type = llvm::FunctionType::get(
+      builder.getInt32Ty(),
+      {builder.getInt32Ty()},
+      false);
+  llvm::FunctionCallee putchar_func = module->getOrInsertFunction("putchar", putchar_type);
+
+  // Call putchar('\n') - newline is ASCII 10
+  builder.CreateCall(putchar_func, {builder.getInt32(10)});
+
+  // Flush stdout to ensure output appears immediately
   llvm::FunctionType *fflush_type = llvm::FunctionType::get(
       builder.getInt32Ty(),
       {llvm::PointerType::get(builder.getContext(), 0)},

@@ -386,11 +386,11 @@ This catches semantic divergence immediately.
 
 ### Compilation Modes
 
-**Lazy JIT (Default):**
+**JIT (Default):**
 ```bash
 anvil
 ```
-- Words compile on first execution
+- Words compile on first execution (lazy JIT)
 - Responsive REPL (definitions return instantly)
 - Hot paths automatically optimized
 
@@ -402,21 +402,14 @@ anvil --no-jit
 - Useful for debugging or resource-constrained environments
 - No compilation overhead
 
-**Eager Compilation:**
-```bash
-anvil --eager-compile
-```
-- Words compile immediately at definition time
-- Maximum runtime performance
-- Slower word definitions
-
 **AOT Compilation:**
 ```bash
-anvil --aot myprogram.fth -o myprogram
+anvil --compile myprogram.fth -o myprogram
 ```
-- Compile entire program to executable
+- Compile entire program to standalone executable
 - No runtime compilation
 - Maximum startup performance
+- Cross-platform: macOS (tested), Linux, Windows (portable code)
 
 ### Word Definition (Same Syntax Everywhere)
 
@@ -424,46 +417,28 @@ anvil --aot myprogram.fth -o myprogram
 : SQUARE DUP * ;
 ```
 
-The `:` syntax is identical in all modes. The compilation strategy is controlled globally, not per-word.
-
-### Runtime Compilation Control (Optional Future Feature)
-
-For fine-grained control, words can modify compilation behavior:
-
-```forth
-: SQUARE DUP * ;           \ Follows current mode (default: lazy JIT)
-
-INTERPRET-ONLY
-: DEBUG-WORD ... ;         \ This word stays interpreted
-
-COMPILE-EAGER  
-: HOT-LOOP ... ;           \ Compile immediately
-
-RESET-MODE                 \ Return to default mode
-```
+The `:` syntax is identical in all modes. The compilation strategy is controlled globally via command-line flags.
 
 ### Word Structure
 
 ```cpp
-enum class CompilationMode {
-    LazyJIT,      // Compile on first execution (default)
-    Interpreted,  // Never compile
-    Eager         // Compile at definition time
-};
-
 struct Word {
-    std::vector<Word*> definition;  // Word references for interpretation
-    void* native_code;              // nullptr until compiled
-    WordFlags flags;                // NEVER_COMPILE, etc.
-    
+    std::string name;
+    llvm::Function* ir_function;    // LLVM IR
+    void* native_code;              // nullptr until JIT compiled
+    WordFlags flags;
+    bool is_primitive;
+
     void execute(ExecutionContext* ctx) {
-        if (flags & NEVER_COMPILE) {
-            interpret(definition, ctx);
-        } else if (!native_code) {
-            // Lazy JIT: compile on first call
-            native_code = compile_to_native(definition);
+        if (mode == Interpreter) {
+            interpret_ir(ir_function, ctx);
+        } else {  // JIT mode
+            if (!native_code) {
+                // Lazy JIT: compile on first call
+                native_code = jit_compile(ir_function);
+            }
+            call_native(native_code, ctx);
         }
-        call_native(native_code, ctx);
     }
 };
 ```
@@ -493,61 +468,57 @@ struct Word {
 - Look up word in global dictionary
 - Execute native code directly (fast path)
 
-**With --eager-compile:**
-- Compilation happens at step 5 above (before returning to REPL)
-
 **With --no-jit:**
 - `native_code` remains nullptr forever
-- Word always interprets
+- Word always interprets IR
 
 ### Benefits of This Approach
 
-✅ **Consistent syntax:** Same `:` everywhere, no cognitive overhead  
-✅ **Smart defaults:** Lazy JIT optimizes common case  
-✅ **User control:** Flags for different use cases  
-✅ **Simple mental model:** Mode is a global setting, not per-word decision  
-✅ **REPL responsive:** Definitions return instantly (except --eager-compile)  
-✅ **No wasted work:** Only compile words that are actually used (lazy mode)  
+✅ **Consistent syntax:** Same `:` everywhere, no cognitive overhead
+✅ **Smart defaults:** Lazy JIT optimizes common case
+✅ **User control:** Flags for different use cases (--no-jit, --compile)
+✅ **Simple mental model:** Mode is a global setting, not per-word decision
+✅ **REPL responsive:** Definitions return instantly
+✅ **No wasted work:** Only compile words that are actually used (lazy JIT)
 ✅ **Traditional Forth:** Global dictionary and two-stack model match expected behavior
 
 ## Primitive Word Set
 
-Approximately 25-30 primitive words that require C++/IR emission:
+Currently implemented: **30 primitives**
 
 **Data Stack Operations:**
 - `DUP`, `DROP`, `SWAP`, `OVER`, `ROT`
 
 **Arithmetic:**
-- `+`, `-`, `*`, `/MOD` (or `/` and `MOD`)
+- `+`, `-`, `*`, `/MOD`
 
-**Logical:**
+**Bitwise/Logical:**
 - `AND`, `OR`, `XOR`, `INVERT`
 
 **Comparison:**
-- `<` (others derivable)
+- `<`, `=` (others can be derived)
 
 **Memory Access:**
-- `@`, `!`, `C@`, `C!`
+- `@`, `!` - 64-bit load/store
+- `C@`, `C!` - 8-bit load/store
 
 **Return Stack Operations:**
 - `>R` - Move top of data stack to return stack
 - `R>` - Move top of return stack to data stack
 - `R@` - Copy top of return stack to data stack
-- `2>R`, `2R>`, `2R@` - Double-cell versions (optional)
+- `2>R`, `2R>`, `2R@` - Double-cell versions for DO loop support
 
-**Control Flow:**
-- `BRANCH` - Unconditional branch
-- `0BRANCH` - Branch if top of stack is zero
-- `EXIT` - Return from word
-
-**Compiler Support:**
-- `LIT` - Push literal value
-- `EXECUTE` - Execute word by address
+**Loop Support:**
+- `I` - Current loop index
+- `J` - Outer loop index (for nested loops)
 
 **I/O Operations:**
-- `.`, `.S`, `EMIT`, `KEY`, `TYPE`, `CR`
+- `.` - Print top of stack
+- `CR` - Print newline
+- `TYPE` - Print string
 
-**System Operations**
+All primitives emit LLVM IR directly (no function calls).
+Primitives work identically in all three execution modes (Interpreter, JIT, AOT).
 
 ### Primitive Implementation Pattern
 
@@ -680,9 +651,9 @@ Performance comes from compilation strategy (inlined native code) rather than mi
 
 ### Compilation Mode Performance Characteristics
 
-**Lazy JIT (default):**
+**JIT (default):**
 - **Interactive use:** Near-instant word definitions, responsive REPL
-- **First execution:** Slight delay while compiling (typically milliseconds with LLVM)
+- **First execution:** Slight delay while compiling (typically milliseconds)
 - **Steady state:** All hot paths are native code, maximum performance
 - **Memory:** Compiled code accumulates but is typically small
 
@@ -691,15 +662,13 @@ Performance comes from compilation strategy (inlined native code) rather than mi
 - **Memory:** Minimal, no compiled code
 - **Best for:** Debugging, understanding control flow, stack visualization
 
-**Eager compilation (--eager-compile):**
-- **Word definition:** Slower, compilation happens immediately
-- **All execution:** Maximum performance from first call
-- **Best for:** Batch processing, known hot paths
-
-**AOT compilation:**
+**AOT compilation (--compile):**
+- **Compilation:** Once, ahead of time
 - **Startup:** Instant, everything pre-compiled
 - **Execution:** Maximum performance
-- **Best for:** Production deployments, standalone executables
+- **Binary size:** ~33KB for typical programs
+- **Cross-platform:** macOS (tested), Linux, Windows
+- **Best for:** Production deployments, standalone executables, distribution
 
 ## Future Directions
 
@@ -742,17 +711,15 @@ make
 ### Running
 
 ```bash
-# Interactive REPL (default: lazy JIT)
+# Interactive REPL (default: JIT)
 ./anvil
 
 # Interpretation only
 ./anvil --no-jit
 
-# Eager compilation
-./anvil --eager-compile
-
 # AOT compilation
-./anvil --aot myprogram.fth -o myprogram
+./anvil --compile myprogram.fth           # Output: a.out
+./anvil --compile myprogram.fth -o myprog # Output: myprog
 ```
 
 ### Testing

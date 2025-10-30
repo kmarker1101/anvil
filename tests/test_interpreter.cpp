@@ -153,6 +153,48 @@ TEST_CASE("Interpreter executes user-defined words", "[interpreter][definitions]
     }
 }
 
+TEST_CASE("Interpreter executes CR primitive", "[interpreter][cr][io]") {
+    // Clear dictionary before tests
+    global_dictionary.clear();
+
+    SECTION("CR alone") {
+        auto ctx = execute_forth_interpreted("CR");
+        // CR doesn't affect the stack
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION("CR with values on stack") {
+        auto ctx = execute_forth_interpreted("42 CR");
+        // CR doesn't consume or produce values
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);
+    }
+
+    SECTION("Multiple CRs") {
+        auto ctx = execute_forth_interpreted("1 2 3 CR CR CR");
+        // Stack should be unchanged
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+    }
+
+    SECTION("CR between values") {
+        auto ctx = execute_forth_interpreted("10 CR 20 CR 30");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+        REQUIRE(ctx.data_stack[2] == 30);
+    }
+
+    SECTION("CR with arithmetic") {
+        auto ctx = execute_forth_interpreted("5 3 + CR 2 *");
+        // 5 + 3 = 8, CR, 8 * 2 = 16
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 16);
+    }
+}
+
 // Clean up dictionary after tests
 TEST_CASE("Interpreter cleanup", "[.cleanup]") {
     global_dictionary.clear();

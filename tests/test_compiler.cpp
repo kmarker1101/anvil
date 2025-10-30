@@ -403,6 +403,43 @@ TEST_CASE("Compiler compiles user-defined words", "[compiler][definitions]") {
     }
 }
 
+TEST_CASE("Compiler compiles CR primitive", "[compiler][cr][io]") {
+    SECTION("CR alone") {
+        auto ctx = execute_forth("CR");
+        // CR doesn't affect the stack
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION("CR with values on stack") {
+        auto ctx = execute_forth("42 CR");
+        // CR doesn't consume or produce values
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);
+    }
+
+    SECTION("Multiple CRs") {
+        auto ctx = execute_forth("1 2 3 CR CR CR");
+        // Stack should be unchanged
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+    }
+
+    SECTION("CR in user-defined word") {
+        auto ctx = execute_forth(": NEWLINE CR ; 99 NEWLINE");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 99);
+    }
+
+    SECTION("CR with arithmetic") {
+        auto ctx = execute_forth("5 3 + CR 2 *");
+        // 5 + 3 = 8, CR, 8 * 2 = 16
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 16);
+    }
+}
+
 // Clean up dictionary after tests
 TEST_CASE("Cleanup", "[.cleanup]") {
     global_dictionary.clear();

@@ -28,6 +28,11 @@ llvm_map_components_to_libnames(llvm_libs
     mcjit
     native
     support
+    target
+    aarch64codegen
+    aarch64asmparser
+    aarch64desc
+    aarch64info
 )
 
 # Fetch Catch2 for testing
@@ -84,3 +89,7 @@ target_include_directories(anvil_tests PRIVATE src)
 include(CTest)
 include(Catch)
 catch_discover_tests(anvil_tests)
+
+# Minimal runtime library for AOT-compiled programs
+add_library(anvil_runtime STATIC src/runtime.c)
+target_include_directories(anvil_runtime PUBLIC src)

@@ -135,6 +135,10 @@ void initialize_primitives() {
     global_primitives.register_primitive(".", [](auto& builder, auto data_stack, auto, auto dsp, auto) {
         emit_dot(builder, data_stack, dsp);
     });
+
+    global_primitives.register_primitive("CR", [](auto& builder, auto, auto, auto, auto) {
+        emit_cr(builder);
+    });
 }
 
 } // namespace anvil
