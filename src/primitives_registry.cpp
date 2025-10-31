@@ -144,6 +144,27 @@ void initialize_primitives() {
         emit_cr(builder);
     });
 
+    // Terminal I/O primitives
+    global_primitives.register_primitive("KEY", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto) {
+        emit_key(builder, data_stack, dsp);
+    });
+
+    global_primitives.register_primitive("KEY?", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto) {
+        emit_key_question(builder, data_stack, dsp);
+    });
+
+    global_primitives.register_primitive("RAW-MODE", [](auto& builder, auto, auto, auto, auto, auto, auto) {
+        emit_raw_mode(builder);
+    });
+
+    global_primitives.register_primitive("COOKED-MODE", [](auto& builder, auto, auto, auto, auto, auto, auto) {
+        emit_cooked_mode(builder);
+    });
+
+    global_primitives.register_primitive("EMIT-ESC", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto) {
+        emit_emit_esc(builder, data_stack, dsp);
+    });
+
     // Memory allocation primitives
     global_primitives.register_primitive("HERE", [](auto& builder, auto data_stack, auto, auto data_space, auto dsp, auto, auto here) {
         emit_here(builder, data_stack, dsp, data_space, here);

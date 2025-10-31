@@ -60,6 +60,7 @@ add_executable(anvil
     src/main.cpp
     src/dictionary.cpp
     src/primitives_registry.cpp
+    src/terminal.c
 )
 target_link_libraries(anvil ${llvm_libs})
 target_include_directories(anvil PRIVATE src)
@@ -82,8 +83,10 @@ add_executable(anvil_tests
     tests/test_stdlib.cpp
     tests/test_variables.cpp
     tests/test_emit.cpp
+    tests/test_terminal.cpp
     src/dictionary.cpp
     src/primitives_registry.cpp
+    src/terminal.c
 )
 target_link_libraries(anvil_tests PRIVATE Catch2::Catch2WithMain ${llvm_libs})
 target_include_directories(anvil_tests PRIVATE src)
@@ -94,7 +97,7 @@ include(Catch)
 catch_discover_tests(anvil_tests)
 
 # Minimal runtime library for AOT-compiled programs
-add_library(anvil_runtime STATIC src/runtime.c)
+add_library(anvil_runtime STATIC src/runtime.c src/terminal.c)
 target_include_directories(anvil_runtime PUBLIC src)
 
 # Copy standard library to build directory

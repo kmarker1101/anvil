@@ -576,7 +576,7 @@ struct Word {
 
 ## Primitive Word Set
 
-Currently implemented: **33 primitives**
+Currently implemented: **38 primitives**
 
 **Data Stack Operations:**
 - `DUP`, `DROP`, `SWAP`, `OVER`, `ROT`
@@ -617,7 +617,14 @@ Currently implemented: **33 primitives**
 - `CR` - Print newline
 - `TYPE` - Print string
 
-All primitives emit LLVM IR directly (no function calls).
+**Terminal I/O:**
+- `KEY` - Read single character (blocking)
+- `KEY?` - Check if character available (non-blocking, returns flag)
+- `RAW-MODE` - Switch terminal to raw mode (no echo, no buffering)
+- `COOKED-MODE` - Restore normal terminal mode
+- `EMIT-ESC` - Output ESC character (ASCII 27) for ANSI escape sequences
+
+All primitives emit LLVM IR directly (no function calls for stack operations).
 Primitives work identically in all three execution modes (Interpreter, JIT, AOT).
 
 ### Primitive Implementation Pattern
@@ -829,7 +836,7 @@ make test
 ```
 
 **Test Coverage:**
-- 175 total tests, all passing (100%)
+- 181 total tests, all passing (100%)
 - All primitive tests run in both JIT and Interpreter modes automatically
 - Stdlib words tested in both modes
 - Ensures semantic consistency across execution modes
@@ -841,6 +848,7 @@ make test
 - `tests/test_stdlib.cpp` - Standard library words (both modes)
 - `tests/test_variables.cpp` - VARIABLE and CONSTANT tests
 - `tests/test_emit.cpp` - EMIT primitive tests
+- `tests/test_terminal.cpp` - Terminal I/O primitives (KEY, KEY?, RAW-MODE, COOKED-MODE)
 - `tests/test_parser.cpp` - Tokenization and parsing
 - `tests/test_ast.cpp` - AST building
 - `tests/test_dictionary.cpp` - Dictionary operations
