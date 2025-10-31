@@ -45,10 +45,6 @@ void initialize_primitives() {
         emit_over(builder, data_stack, dsp);
     });
 
-    global_primitives.register_primitive("ROT", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
-        emit_rot(builder, data_stack, dsp);
-    });
-
     // Bitwise operations
     global_primitives.register_primitive("AND", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
         emit_and(builder, data_stack, dsp);
@@ -69,6 +65,10 @@ void initialize_primitives() {
     // Comparison
     global_primitives.register_primitive("<", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
         emit_lt(builder, data_stack, dsp);
+    });
+
+    global_primitives.register_primitive("U<", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+        emit_ult(builder, data_stack, dsp);
     });
 
     global_primitives.register_primitive("=", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {

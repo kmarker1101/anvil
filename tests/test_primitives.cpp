@@ -305,24 +305,6 @@ TEST_BOTH_MODES("OVER primitive", "[primitives][stack][over]", {
     REQUIRE(ctx.data_stack[2] == 100);
 })
 
-TEST_BOTH_MODES("ROT primitive", "[primitives][stack][rot]", {
-    auto ctx = execute_test_mode("test_rot", mode, [](llvm::IRBuilder<>& builder,
-                                           llvm::Value* data_stack_ptr,
-                                           llvm::Value* dsp_ptr) {
-        // Push 1, 2, 3 onto the stack
-        push_values(builder, data_stack_ptr, dsp_ptr, {1, 2, 3});
-
-        // Execute rot primitive
-        emit_rot(builder, data_stack_ptr, dsp_ptr);
-    });
-
-    // Check result: 1 2 3 -> 2 3 1
-    REQUIRE(ctx.dsp == 3);
-    REQUIRE(ctx.data_stack[0] == 2);
-    REQUIRE(ctx.data_stack[1] == 3);
-    REQUIRE(ctx.data_stack[2] == 1);
-})
-
 TEST_BOTH_MODES("OVER then add", "[primitives][stack][over][add]", {
     auto ctx = execute_test_mode("test_over_add", mode, [](llvm::IRBuilder<>& builder,
                                                 llvm::Value* data_stack_ptr,
@@ -341,28 +323,6 @@ TEST_BOTH_MODES("OVER then add", "[primitives][stack][over][add]", {
     REQUIRE(ctx.dsp == 2);
     REQUIRE(ctx.data_stack[0] == 5);
     REQUIRE(ctx.data_stack[1] == 15);
-})
-
-TEST_BOTH_MODES("ROT to reorder for subtraction", "[primitives][stack][rot][sub]", {
-    auto ctx = execute_test_mode("test_rot_sub", mode, [](llvm::IRBuilder<>& builder,
-                                               llvm::Value* data_stack_ptr,
-                                               llvm::Value* dsp_ptr) {
-        // Push 100, 30, 20 onto the stack
-        push_values(builder, data_stack_ptr, dsp_ptr, {100, 30, 20});
-
-        // ROT: 100 30 20 -> 30 20 100
-        emit_rot(builder, data_stack_ptr, dsp_ptr);
-
-        // DROP: 30 20 100 -> 30 20
-        emit_drop(builder, data_stack_ptr, dsp_ptr);
-
-        // SUB: 30 20 -> 10
-        emit_sub(builder, data_stack_ptr, dsp_ptr);
-    });
-
-    // Check result: 30 - 20 = 10
-    REQUIRE(ctx.dsp == 1);
-    REQUIRE(ctx.data_stack[0] == 10);
 })
 
 TEST_BOTH_MODES("AND primitive", "[primitives][bitwise][and]", {

@@ -356,6 +356,121 @@ TEST_CASE("Standard Library - / (division)", "[stdlib][divide]") {
     }
 }
 
+TEST_CASE("Standard Library - MOD (modulo)", "[stdlib][mod]") {
+    SECTION("Simple modulo") {
+        auto ctx = execute_with_stdlib("12 5 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 2);  // 12 mod 5 = 2
+    }
+
+    SECTION("Modulo with no remainder") {
+        auto ctx = execute_with_stdlib("20 5 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 20 mod 5 = 0
+    }
+
+    SECTION("Modulo smaller than divisor") {
+        auto ctx = execute_with_stdlib("3 5 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 3);  // 3 mod 5 = 3
+    }
+
+    SECTION("Modulo by 2 (even test)") {
+        auto ctx = execute_with_stdlib("10 2 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 10 is even
+    }
+
+    SECTION("Modulo by 2 (odd test)") {
+        auto ctx = execute_with_stdlib("11 2 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1);  // 11 is odd
+    }
+
+    SECTION("Modulo with negative dividend") {
+        auto ctx = execute_with_stdlib("-12 5 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -2);  // -12 mod 5 = -2
+    }
+
+    SECTION("Modulo with negative divisor") {
+        auto ctx = execute_with_stdlib("12 -5 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 2);  // 12 mod -5 = 2
+    }
+
+    SECTION("Modulo with both negative") {
+        auto ctx = execute_with_stdlib("-12 -5 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -2);  // -12 mod -5 = -2
+    }
+
+    SECTION("Modulo by 10 (last digit)") {
+        auto ctx = execute_with_stdlib("12345 10 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);  // Last digit
+    }
+
+    SECTION("Modulo by 100") {
+        auto ctx = execute_with_stdlib("12345 100 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 45);  // Last two digits
+    }
+
+    SECTION("Modulo large numbers") {
+        auto ctx = execute_with_stdlib("1000 7 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 6);  // 1000 mod 7 = 6
+    }
+
+    SECTION("Multiple modulo operations") {
+        auto ctx = execute_with_stdlib("17 5 MOD 23 7 MOD");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 2);  // 17 mod 5 = 2
+        REQUIRE(ctx.data_stack[1] == 2);  // 23 mod 7 = 2
+    }
+
+    SECTION("MOD in JIT mode") {
+        auto ctx = execute_with_stdlib("17 5 MOD", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 2);
+    }
+
+    SECTION("MOD in Interpreter mode") {
+        auto ctx = execute_with_stdlib("17 5 MOD", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 2);
+    }
+
+    SECTION("Verify MOD only returns remainder") {
+        auto ctx = execute_with_stdlib("12 5 MOD");
+        REQUIRE(ctx.dsp == 1);  // Only one value on stack
+        REQUIRE(ctx.data_stack[0] == 2);  // Remainder (quotient 2 is discarded)
+    }
+
+    SECTION("Compare MOD vs /MOD behavior") {
+        auto ctx = execute_with_stdlib("17 5 MOD 17 5 /MOD");
+        REQUIRE(ctx.dsp == 3);  // MOD leaves 1 value, /MOD leaves 2 values
+        REQUIRE(ctx.data_stack[0] == 2);  // MOD result (remainder)
+        REQUIRE(ctx.data_stack[1] == 2);  // /MOD remainder
+        REQUIRE(ctx.data_stack[2] == 3);  // /MOD quotient
+    }
+
+    SECTION("MOD and / together reconstruct number") {
+        // n = (n/d)*d + (n mod d)
+        auto ctx = execute_with_stdlib("17 5 DUP >R / 5 * 17 5 MOD + R> DROP");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 17);  // Reconstructed original
+    }
+
+    SECTION("MOD for range checking") {
+        // Common use: wrap around in range [0, n)
+        auto ctx = execute_with_stdlib("15 10 MOD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);  // 15 wrapped to [0,10) = 5
+    }
+}
+
 TEST_CASE("Standard Library - 1+ (increment)", "[stdlib][1+]") {
     SECTION("Increment positive number") {
         auto ctx = execute_with_stdlib("5 1+");
@@ -535,6 +650,1251 @@ TEST_CASE("Standard Library - 1- (decrement)", "[stdlib][1-]") {
         REQUIRE(ctx.dsp == 2);
         REQUIRE(ctx.data_stack[0] == 14);  // 15 1-
         REQUIRE(ctx.data_stack[1] == 14);  // 15 1 -
+    }
+}
+
+TEST_CASE("Standard Library - ?DUP", "[stdlib][qdup]") {
+    SECTION("?DUP with zero leaves single zero") {
+        auto ctx = execute_with_stdlib("0 ?DUP");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Single zero, not duplicated
+    }
+
+    SECTION("?DUP with positive number duplicates it") {
+        auto ctx = execute_with_stdlib("42 ?DUP");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 42);
+        REQUIRE(ctx.data_stack[1] == 42);  // Duplicated
+    }
+
+    SECTION("?DUP with negative number duplicates it") {
+        auto ctx = execute_with_stdlib("-17 ?DUP");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == -17);
+        REQUIRE(ctx.data_stack[1] == -17);  // Duplicated
+    }
+
+    SECTION("?DUP with 1 duplicates") {
+        auto ctx = execute_with_stdlib("1 ?DUP");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 1);
+    }
+
+    SECTION("?DUP with -1 duplicates") {
+        auto ctx = execute_with_stdlib("-1 ?DUP");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == -1);
+        REQUIRE(ctx.data_stack[1] == -1);
+    }
+
+    SECTION("Multiple ?DUP on zero") {
+        auto ctx = execute_with_stdlib("0 ?DUP ?DUP ?DUP");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Still just one zero
+    }
+
+    SECTION("Multiple ?DUP on non-zero") {
+        auto ctx = execute_with_stdlib("5 ?DUP ?DUP");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 5);
+        REQUIRE(ctx.data_stack[1] == 5);
+        REQUIRE(ctx.data_stack[2] == 5);  // Tripled (5 -> 5,5 -> 5,5,5)
+    }
+
+    SECTION("?DUP in conditional pattern (non-zero)") {
+        // Common pattern: value ?DUP IF ... operate on duplicate ... THEN
+        // But IF consumes the duplicate, so need value below
+        auto ctx = execute_with_stdlib("10 20 OVER ?DUP IF DROP + THEN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 30);  // 10 + 20
+    }
+
+    SECTION("?DUP in conditional pattern (zero)") {
+        // With zero, ?DUP doesn't duplicate, leaves one zero
+        // The typical pattern is: n ?DUP IF ... ELSE ... THEN
+        // Since IF consumes the value, we just verify ?DUP behavior
+        auto ctx = execute_with_stdlib("0 ?DUP");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Just one zero
+    }
+
+    SECTION("?DUP with expression result (non-zero)") {
+        auto ctx = execute_with_stdlib("3 4 * ?DUP");  // 12 ?DUP
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 12);
+        REQUIRE(ctx.data_stack[1] == 12);
+    }
+
+    SECTION("?DUP with expression result (zero)") {
+        auto ctx = execute_with_stdlib("5 5 - ?DUP");  // 0 ?DUP
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("?DUP with large positive number") {
+        auto ctx = execute_with_stdlib("999999 ?DUP");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 999999);
+        REQUIRE(ctx.data_stack[1] == 999999);
+    }
+
+    SECTION("?DUP with large negative number") {
+        auto ctx = execute_with_stdlib("-999999 ?DUP");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == -999999);
+        REQUIRE(ctx.data_stack[1] == -999999);
+    }
+
+    SECTION("?DUP on stack with multiple items (zero on top)") {
+        auto ctx = execute_with_stdlib("1 2 3 0 ?DUP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+        REQUIRE(ctx.data_stack[3] == 0);  // Not duplicated
+    }
+
+    SECTION("?DUP on stack with multiple items (non-zero on top)") {
+        auto ctx = execute_with_stdlib("1 2 3 99 ?DUP");
+        REQUIRE(ctx.dsp == 5);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+        REQUIRE(ctx.data_stack[3] == 99);
+        REQUIRE(ctx.data_stack[4] == 99);  // Duplicated
+    }
+
+    SECTION("JIT mode - ?DUP with zero") {
+        auto ctx = execute_with_stdlib(": TEST-ZERO 0 ?DUP ; TEST-ZERO", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("JIT mode - ?DUP with non-zero") {
+        auto ctx = execute_with_stdlib(": TEST-NONZERO 42 ?DUP ; TEST-NONZERO", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 42);
+        REQUIRE(ctx.data_stack[1] == 42);
+    }
+
+    SECTION("Interpreter mode - ?DUP with zero") {
+        auto ctx = execute_with_stdlib(": TEST-ZERO 0 ?DUP ; TEST-ZERO", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("Interpreter mode - ?DUP with non-zero") {
+        auto ctx = execute_with_stdlib(": TEST-NONZERO 42 ?DUP ; TEST-NONZERO", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 42);
+        REQUIRE(ctx.data_stack[1] == 42);
+    }
+
+    SECTION("?DUP vs DUP behavior comparison (non-zero)") {
+        auto ctx = execute_with_stdlib("5 ?DUP 5 DUP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 5);  // First 5
+        REQUIRE(ctx.data_stack[1] == 5);  // ?DUP duplicate
+        REQUIRE(ctx.data_stack[2] == 5);  // Second 5
+        REQUIRE(ctx.data_stack[3] == 5);  // DUP duplicate
+        // Both behave the same for non-zero
+    }
+
+    SECTION("?DUP vs DUP behavior comparison (zero)") {
+        auto ctx = execute_with_stdlib("0 ?DUP 0 DUP");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 0);  // From 0 ?DUP (not duplicated)
+        REQUIRE(ctx.data_stack[1] == 0);  // Second 0
+        REQUIRE(ctx.data_stack[2] == 0);  // From 0 DUP (duplicated)
+        // ?DUP leaves 1 zero, DUP leaves 2 zeros
+    }
+
+    SECTION("?DUP useful for error checking pattern") {
+        // Pattern: get-value ?DUP IF process ELSE handle-zero THEN
+        // Simulated: push value, ?DUP, use IF to check
+        auto ctx = execute_with_stdlib("0 ?DUP 0= IF 999 THEN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 999);  // Error case handled
+    }
+
+    SECTION("?DUP with calculation preserves result (non-zero)") {
+        auto ctx = execute_with_stdlib("7 3 - ?DUP");  // 4 ?DUP
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 4);
+        REQUIRE(ctx.data_stack[1] == 4);
+    }
+
+    SECTION("?DUP with calculation preserves result (zero)") {
+        auto ctx = execute_with_stdlib("7 7 - ?DUP");  // 0 ?DUP
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+}
+
+TEST_CASE("Standard Library - 2*", "[stdlib][2star]") {
+    SECTION("2* doubles positive number") {
+        auto ctx = execute_with_stdlib("5 2*");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("2* doubles negative number") {
+        auto ctx = execute_with_stdlib("-7 2*");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -14);
+    }
+
+    SECTION("2* with zero") {
+        auto ctx = execute_with_stdlib("0 2*");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("2* with one") {
+        auto ctx = execute_with_stdlib("1 2*");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 2);
+    }
+
+    SECTION("2* with large number") {
+        auto ctx = execute_with_stdlib("50000 2*");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 100000);
+    }
+
+    SECTION("Multiple 2* operations") {
+        auto ctx = execute_with_stdlib("3 2* 2* 2*");  // 3 * 2 * 2 * 2 = 24
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 24);
+    }
+
+    SECTION("2* is equivalent to 2 *") {
+        auto ctx = execute_with_stdlib("15 2* 15 2 *");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 30);  // 15 2*
+        REQUIRE(ctx.data_stack[1] == 30);  // 15 2 *
+    }
+
+    SECTION("2* with expression") {
+        auto ctx = execute_with_stdlib("3 4 + 2*");  // (3+4)*2 = 14
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 14);
+    }
+
+    SECTION("JIT mode - 2*") {
+        auto ctx = execute_with_stdlib(": DOUBLE 2* ; 8 DOUBLE", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 16);
+    }
+
+    SECTION("Interpreter mode - 2*") {
+        auto ctx = execute_with_stdlib(": DOUBLE 2* ; 8 DOUBLE", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 16);
+    }
+}
+
+TEST_CASE("Standard Library - 2/", "[stdlib][2slash]") {
+    SECTION("2/ halves positive even number") {
+        auto ctx = execute_with_stdlib("10 2/");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);
+    }
+
+    SECTION("2/ halves positive odd number") {
+        auto ctx = execute_with_stdlib("11 2/");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);  // Truncates toward zero
+    }
+
+    SECTION("2/ halves negative even number") {
+        auto ctx = execute_with_stdlib("-10 2/");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -5);
+    }
+
+    SECTION("2/ halves negative odd number") {
+        auto ctx = execute_with_stdlib("-11 2/");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -5);  // Truncates toward zero
+    }
+
+    SECTION("2/ with zero") {
+        auto ctx = execute_with_stdlib("0 2/");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("2/ with two") {
+        auto ctx = execute_with_stdlib("2 2/");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1);
+    }
+
+    SECTION("2/ with large number") {
+        auto ctx = execute_with_stdlib("100000 2/");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 50000);
+    }
+
+    SECTION("Multiple 2/ operations") {
+        auto ctx = execute_with_stdlib("64 2/ 2/ 2/");  // 64 / 2 / 2 / 2 = 8
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 8);
+    }
+
+    SECTION("2/ is equivalent to 2 /") {
+        auto ctx = execute_with_stdlib("30 2/ 30 2 /");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 15);  // 30 2/
+        REQUIRE(ctx.data_stack[1] == 15);  // 30 2 /
+    }
+
+    SECTION("2* and 2/ are inverses (even number)") {
+        auto ctx = execute_with_stdlib("42 2* 2/");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);  // Back to original
+    }
+
+    SECTION("2/ then 2* loses precision for odd") {
+        auto ctx = execute_with_stdlib("11 2/ 2*");  // 11/2=5, 5*2=10 (not 11)
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);  // Lost the 1
+    }
+
+    SECTION("JIT mode - 2/") {
+        auto ctx = execute_with_stdlib(": HALVE 2/ ; 20 HALVE", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("Interpreter mode - 2/") {
+        auto ctx = execute_with_stdlib(": HALVE 2/ ; 20 HALVE", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+}
+
+TEST_CASE("Standard Library - */", "[stdlib][starslash]") {
+    SECTION("*/ basic operation") {
+        auto ctx = execute_with_stdlib("3 4 2 */");  // (3*4)/2 = 12/2 = 6
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 6);
+    }
+
+    SECTION("*/ for scaling up") {
+        auto ctx = execute_with_stdlib("10 3 1 */");  // (10*3)/1 = 30
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 30);
+    }
+
+    SECTION("*/ for scaling down") {
+        auto ctx = execute_with_stdlib("100 1 10 */");  // (100*1)/10 = 10
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("*/ with negative numbers") {
+        auto ctx = execute_with_stdlib("-12 5 3 */");  // (-12*5)/3 = -60/3 = -20
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -20);
+    }
+
+    SECTION("*/ percentage calculation") {
+        auto ctx = execute_with_stdlib("200 75 100 */");  // 75% of 200 = 150
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 150);
+    }
+
+    SECTION("*/ avoids intermediate overflow") {
+        // With large numbers, */ can help avoid overflow in intermediate result
+        auto ctx = execute_with_stdlib("1000 500 100 */");  // (1000*500)/100 = 5000
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5000);
+    }
+
+    SECTION("*/ with zero numerator") {
+        auto ctx = execute_with_stdlib("0 5 3 */");  // (0*5)/3 = 0
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("*/ with zero multiplier") {
+        auto ctx = execute_with_stdlib("10 0 5 */");  // (10*0)/5 = 0
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("*/ division by zero protection") {
+        auto ctx = execute_with_stdlib("10 5 0 */");  // (10*5)/0 = division by zero
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Protected, returns 0
+    }
+
+    SECTION("*/ with ones (identity)") {
+        auto ctx = execute_with_stdlib("42 1 1 */");  // (42*1)/1 = 42
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);
+    }
+
+    SECTION("*/ scaling ratio") {
+        auto ctx = execute_with_stdlib("50 3 2 */");  // (50*3)/2 = 150/2 = 75
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 75);
+    }
+
+    SECTION("*/ with truncation") {
+        auto ctx = execute_with_stdlib("7 5 3 */");  // (7*5)/3 = 35/3 = 11
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 11);  // Truncates remainder
+    }
+
+    SECTION("Multiple */ operations") {
+        auto ctx = execute_with_stdlib("10 2 1 */ 3 2 */");  // ((10*2)/1 * 3)/2 = (20*3)/2 = 30
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 30);
+    }
+
+    SECTION("*/ compared to separate * and /") {
+        auto ctx = execute_with_stdlib("8 3 2 */ 8 3 * 2 /");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 12);  // 8 3 2 */
+        REQUIRE(ctx.data_stack[1] == 12);  // 8 3 * 2 /
+        // Results are the same
+    }
+
+    SECTION("JIT mode - */") {
+        auto ctx = execute_with_stdlib(": SCALE */ ; 10 5 2 SCALE", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 25);  // (10*5)/2
+    }
+
+    SECTION("Interpreter mode - */") {
+        auto ctx = execute_with_stdlib(": SCALE */ ; 10 5 2 SCALE", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 25);  // (10*5)/2
+    }
+
+    SECTION("*/ for fraction multiplication") {
+        // Compute 2/3 of 15: (15 * 2) / 3 = 10
+        auto ctx = execute_with_stdlib("15 2 3 */");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("*/ preserves precision better") {
+        // 100 * 3 / 4 vs 100 3 4 */ - both should give same result
+        auto ctx = execute_with_stdlib("100 3 4 */");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 75);
+    }
+}
+
+TEST_CASE("Standard Library - */MOD", "[stdlib][starslashmod]") {
+    SECTION("*/MOD basic operation") {
+        auto ctx = execute_with_stdlib("17 3 2 */MOD");  // (17*3)/2 = 51/2 = 25 remainder 1
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 1);   // remainder
+        REQUIRE(ctx.data_stack[1] == 25);  // quotient
+    }
+
+    SECTION("*/MOD with no remainder") {
+        auto ctx = execute_with_stdlib("10 4 2 */MOD");  // (10*4)/2 = 40/2 = 20 remainder 0
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 0);   // remainder
+        REQUIRE(ctx.data_stack[1] == 20);  // quotient
+    }
+
+    SECTION("*/MOD scaling with remainder") {
+        auto ctx = execute_with_stdlib("7 5 3 */MOD");  // (7*5)/3 = 35/3 = 11 remainder 2
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 2);   // remainder
+        REQUIRE(ctx.data_stack[1] == 11);  // quotient
+    }
+
+    SECTION("*/MOD with negative dividend") {
+        auto ctx = execute_with_stdlib("-17 3 2 */MOD");  // (-17*3)/2 = -51/2 = -25 remainder -1
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == -1);   // remainder
+        REQUIRE(ctx.data_stack[1] == -25);  // quotient
+    }
+
+    SECTION("*/MOD with zero numerator") {
+        auto ctx = execute_with_stdlib("0 5 3 */MOD");  // (0*5)/3 = 0/3 = 0 remainder 0
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 0);  // remainder
+        REQUIRE(ctx.data_stack[1] == 0);  // quotient
+    }
+
+    SECTION("*/MOD with zero multiplier") {
+        auto ctx = execute_with_stdlib("10 0 5 */MOD");  // (10*0)/5 = 0/5 = 0 remainder 0
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 0);  // remainder
+        REQUIRE(ctx.data_stack[1] == 0);  // quotient
+    }
+
+    SECTION("*/MOD division by zero") {
+        auto ctx = execute_with_stdlib("10 5 0 */MOD");  // (10*5)/0 = division by zero
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 50);  // /MOD returns product as remainder
+        REQUIRE(ctx.data_stack[1] == 0);   // quotient is 0
+    }
+
+    SECTION("*/MOD percentage with remainder") {
+        auto ctx = execute_with_stdlib("100 33 100 */MOD");  // 33% of 100 = 33 remainder 0
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 0);   // remainder
+        REQUIRE(ctx.data_stack[1] == 33);  // quotient (33%)
+    }
+
+    SECTION("*/MOD time conversion") {
+        // Convert 125 seconds to minutes and seconds
+        auto ctx = execute_with_stdlib("125 1 60 */MOD");  // (125*1)/60 = 2 remainder 5
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 5);  // 5 seconds
+        REQUIRE(ctx.data_stack[1] == 2);  // 2 minutes
+    }
+
+    SECTION("*/MOD fraction multiplication with remainder") {
+        // 2/3 of 16 = (16*2)/3 = 32/3 = 10 remainder 2
+        auto ctx = execute_with_stdlib("16 2 3 */MOD");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 2);   // remainder
+        REQUIRE(ctx.data_stack[1] == 10);  // quotient
+    }
+
+    SECTION("*/MOD reconstruct original") {
+        // quotient * divisor + remainder = original product
+        auto ctx = execute_with_stdlib("17 3 2 */MOD 2 * +");  // 25*2 + 1 = 51 (which is 17*3)
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 51);  // 17*3
+    }
+
+    SECTION("*/MOD vs */ and MOD separately") {
+        auto ctx = execute_with_stdlib("7 5 3 */MOD 7 5 3 */ 7 5 * 3 MOD");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 2);   // */MOD remainder
+        REQUIRE(ctx.data_stack[1] == 11);  // */MOD quotient
+        REQUIRE(ctx.data_stack[2] == 11);  // */ result (quotient only)
+        REQUIRE(ctx.data_stack[3] == 2);   // MOD result (remainder only)
+    }
+
+    SECTION("*/MOD large numbers") {
+        auto ctx = execute_with_stdlib("1000 500 100 */MOD");  // (1000*500)/100 = 5000 remainder 0
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 0);     // remainder
+        REQUIRE(ctx.data_stack[1] == 5000);  // quotient
+    }
+
+    SECTION("*/MOD scaling ratio") {
+        auto ctx = execute_with_stdlib("50 7 4 */MOD");  // (50*7)/4 = 350/4 = 87 remainder 2
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 2);   // remainder
+        REQUIRE(ctx.data_stack[1] == 87);  // quotient
+    }
+
+    SECTION("*/MOD with ones") {
+        auto ctx = execute_with_stdlib("42 1 1 */MOD");  // (42*1)/1 = 42 remainder 0
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 0);   // remainder
+        REQUIRE(ctx.data_stack[1] == 42);  // quotient
+    }
+
+    SECTION("JIT mode - */MOD") {
+        auto ctx = execute_with_stdlib(": SCALE-MOD */MOD ; 17 3 2 SCALE-MOD", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 1);   // remainder
+        REQUIRE(ctx.data_stack[1] == 25);  // quotient
+    }
+
+    SECTION("Interpreter mode - */MOD") {
+        auto ctx = execute_with_stdlib(": SCALE-MOD */MOD ; 17 3 2 SCALE-MOD", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 1);   // remainder
+        REQUIRE(ctx.data_stack[1] == 25);  // quotient
+    }
+
+    SECTION("*/MOD fixed-point arithmetic") {
+        // Scale 123 by 456/1000 (0.456)
+        auto ctx = execute_with_stdlib("123 456 1000 */MOD");  // (123*456)/1000 = 56088/1000 = 56 remainder 88
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 88);  // fractional part (0.088)
+        REQUIRE(ctx.data_stack[1] == 56);  // integer part
+    }
+
+    SECTION("*/MOD preserves both results") {
+        // Unlike */ which only gives quotient, */MOD gives both
+        auto ctx = execute_with_stdlib("11 7 5 */MOD");  // (11*7)/5 = 77/5 = 15 remainder 2
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 2);   // remainder (lost in */)
+        REQUIRE(ctx.data_stack[1] == 15);  // quotient (same as */)
+    }
+
+    SECTION("*/MOD with small numbers") {
+        auto ctx = execute_with_stdlib("2 3 4 */MOD");  // (2*3)/4 = 6/4 = 1 remainder 2
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 2);  // remainder
+        REQUIRE(ctx.data_stack[1] == 1);  // quotient
+    }
+}
+
+TEST_CASE("Standard Library - MIN", "[stdlib][min]") {
+    SECTION("MIN of two positive numbers (first smaller)") {
+        auto ctx = execute_with_stdlib("5 10 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);
+    }
+
+    SECTION("MIN of two positive numbers (second smaller)") {
+        auto ctx = execute_with_stdlib("10 5 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);
+    }
+
+    SECTION("MIN with equal numbers") {
+        auto ctx = execute_with_stdlib("7 7 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 7);
+    }
+
+    SECTION("MIN with negative numbers") {
+        auto ctx = execute_with_stdlib("-10 -5 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -10);  // -10 is less than -5
+    }
+
+    SECTION("MIN with positive and negative") {
+        auto ctx = execute_with_stdlib("5 -3 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -3);
+    }
+
+    SECTION("MIN with negative and positive") {
+        auto ctx = execute_with_stdlib("-3 5 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -3);
+    }
+
+    SECTION("MIN with zero (zero smaller)") {
+        auto ctx = execute_with_stdlib("0 10 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("MIN with zero (zero larger)") {
+        auto ctx = execute_with_stdlib("-5 0 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -5);
+    }
+
+    SECTION("MIN with both zero") {
+        auto ctx = execute_with_stdlib("0 0 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("MIN with large numbers") {
+        auto ctx = execute_with_stdlib("100000 99999 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 99999);
+    }
+
+    SECTION("Multiple MIN operations") {
+        auto ctx = execute_with_stdlib("15 8 MIN 3 MIN");  // MIN(MIN(15,8),3) = MIN(8,3) = 3
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 3);
+    }
+
+    SECTION("MIN of expression results") {
+        auto ctx = execute_with_stdlib("3 4 + 2 5 * MIN");  // MIN(7, 10) = 7
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 7);
+    }
+
+    SECTION("MIN is commutative") {
+        auto ctx = execute_with_stdlib("10 5 MIN 5 10 MIN");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 5);
+        REQUIRE(ctx.data_stack[1] == 5);  // Both give same result
+    }
+
+    SECTION("MIN clamping (lower bound)") {
+        // Ensure value is at least 10
+        auto ctx = execute_with_stdlib("5 10 MAX");  // Use MAX for lower bound, but test MIN exists
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("JIT mode - MIN") {
+        auto ctx = execute_with_stdlib(": MINIMUM MIN ; 12 7 MINIMUM", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 7);
+    }
+
+    SECTION("Interpreter mode - MIN") {
+        auto ctx = execute_with_stdlib(": MINIMUM MIN ; 12 7 MINIMUM", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 7);
+    }
+
+    SECTION("MIN in range checking") {
+        // Clamp value to maximum
+        auto ctx = execute_with_stdlib("150 100 MIN");  // Cap at 100
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 100);
+    }
+
+    SECTION("MIN with one") {
+        auto ctx = execute_with_stdlib("5 1 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1);
+    }
+
+    SECTION("MIN with negative one") {
+        auto ctx = execute_with_stdlib("0 -1 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);
+    }
+}
+
+TEST_CASE("Standard Library - MAX", "[stdlib][max]") {
+    SECTION("MAX of two positive numbers (first larger)") {
+        auto ctx = execute_with_stdlib("10 5 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("MAX of two positive numbers (second larger)") {
+        auto ctx = execute_with_stdlib("5 10 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("MAX with equal numbers") {
+        auto ctx = execute_with_stdlib("7 7 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 7);
+    }
+
+    SECTION("MAX with negative numbers") {
+        auto ctx = execute_with_stdlib("-10 -5 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -5);  // -5 is greater than -10
+    }
+
+    SECTION("MAX with positive and negative") {
+        auto ctx = execute_with_stdlib("5 -3 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);
+    }
+
+    SECTION("MAX with negative and positive") {
+        auto ctx = execute_with_stdlib("-3 5 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);
+    }
+
+    SECTION("MAX with zero (zero larger)") {
+        auto ctx = execute_with_stdlib("0 -10 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("MAX with zero (zero smaller)") {
+        auto ctx = execute_with_stdlib("5 0 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);
+    }
+
+    SECTION("MAX with both zero") {
+        auto ctx = execute_with_stdlib("0 0 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("MAX with large numbers") {
+        auto ctx = execute_with_stdlib("100000 99999 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 100000);
+    }
+
+    SECTION("Multiple MAX operations") {
+        auto ctx = execute_with_stdlib("5 8 MAX 12 MAX");  // MAX(MAX(5,8),12) = MAX(8,12) = 12
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 12);
+    }
+
+    SECTION("MAX of expression results") {
+        auto ctx = execute_with_stdlib("3 4 + 2 5 * MAX");  // MAX(7, 10) = 10
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("MAX is commutative") {
+        auto ctx = execute_with_stdlib("10 5 MAX 5 10 MAX");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 10);  // Both give same result
+    }
+
+    SECTION("MAX clamping (lower bound)") {
+        // Ensure value is at least 10
+        auto ctx = execute_with_stdlib("5 10 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("JIT mode - MAX") {
+        auto ctx = execute_with_stdlib(": MAXIMUM MAX ; 12 7 MAXIMUM", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 12);
+    }
+
+    SECTION("Interpreter mode - MAX") {
+        auto ctx = execute_with_stdlib(": MAXIMUM MAX ; 12 7 MAXIMUM", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 12);
+    }
+
+    SECTION("MAX in range checking") {
+        // Ensure at least minimum value
+        auto ctx = execute_with_stdlib("5 10 MAX");  // At least 10
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("MAX with one") {
+        auto ctx = execute_with_stdlib("5 1 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);
+    }
+
+    SECTION("MAX with negative one") {
+        auto ctx = execute_with_stdlib("0 -1 MAX");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+}
+
+TEST_CASE("Standard Library - MIN and MAX together", "[stdlib][min][max]") {
+    SECTION("MIN and MAX combined (clamping)") {
+        // Clamp value between 10 and 100
+        auto ctx = execute_with_stdlib("5 10 MAX 100 MIN");  // 5 -> 10 -> 10
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("Clamp value in range (below minimum)") {
+        auto ctx = execute_with_stdlib("5 10 MAX 100 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);  // Clamped to minimum
+    }
+
+    SECTION("Clamp value in range (above maximum)") {
+        auto ctx = execute_with_stdlib("150 10 MAX 100 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 100);  // Clamped to maximum
+    }
+
+    SECTION("Clamp value in range (within bounds)") {
+        auto ctx = execute_with_stdlib("50 10 MAX 100 MIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 50);  // Unchanged, within range
+    }
+
+    SECTION("MIN and MAX are inverses for same values") {
+        auto ctx = execute_with_stdlib("7 3 MIN 7 3 MAX");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 3);  // MIN
+        REQUIRE(ctx.data_stack[1] == 7);  // MAX
+    }
+
+    SECTION("MIN of MAX") {
+        auto ctx = execute_with_stdlib("5 10 MAX 8 MIN");  // MAX(5,10)=10, MIN(10,8)=8
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 8);
+    }
+
+    SECTION("MAX of MIN") {
+        auto ctx = execute_with_stdlib("5 10 MIN 8 MAX");  // MIN(5,10)=5, MAX(5,8)=8
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 8);
+    }
+}
+
+TEST_CASE("Standard Library - WITHIN", "[stdlib][within]") {
+    SECTION("WITHIN - value inside range") {
+        auto ctx = execute_with_stdlib("5 3 10 WITHIN");  // Is 5 within [3,10)?
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True (flag is -1)
+    }
+
+    SECTION("WITHIN - value at lower bound (inclusive)") {
+        auto ctx = execute_with_stdlib("3 3 10 WITHIN");  // Is 3 within [3,10)?
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True (lower bound is inclusive)
+    }
+
+    SECTION("WITHIN - value at upper bound (exclusive)") {
+        auto ctx = execute_with_stdlib("10 3 10 WITHIN");  // Is 10 within [3,10)?
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // False (upper bound is exclusive)
+    }
+
+    SECTION("WITHIN - value below range") {
+        auto ctx = execute_with_stdlib("2 3 10 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        // (2-3) = -1 (large unsigned), which is NOT < (10-3) = 7 unsigned
+        REQUIRE(ctx.data_stack[0] == 0);  // False
+    }
+
+    SECTION("WITHIN - value above range") {
+        auto ctx = execute_with_stdlib("11 3 10 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // False
+    }
+
+    SECTION("WITHIN - negative range") {
+        auto ctx = execute_with_stdlib("-5 -10 0 WITHIN");  // Is -5 within [-10,0)?
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True
+    }
+
+    SECTION("WITHIN - negative value below negative range") {
+        auto ctx = execute_with_stdlib("-15 -10 0 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        // (-15) - (-10) = -5 (large unsigned), NOT < (0 - (-10)) = 10 unsigned
+        REQUIRE(ctx.data_stack[0] == 0);  // False
+    }
+
+    SECTION("WITHIN - zero in range") {
+        auto ctx = execute_with_stdlib("0 -5 5 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True
+    }
+
+    SECTION("WITHIN - zero at lower bound") {
+        auto ctx = execute_with_stdlib("0 0 10 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True (inclusive)
+    }
+
+    SECTION("WITHIN - zero at upper bound") {
+        auto ctx = execute_with_stdlib("0 -10 0 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // False (exclusive)
+    }
+
+    SECTION("WITHIN - single value range") {
+        auto ctx = execute_with_stdlib("5 5 6 WITHIN");  // [5,6)
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True (5 is in range)
+    }
+
+    SECTION("WITHIN - empty range") {
+        auto ctx = execute_with_stdlib("5 5 5 WITHIN");  // [5,5) is empty
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // False (no values in empty range)
+    }
+
+    SECTION("WITHIN - character range (ASCII)") {
+        // Check if 'M' (77) is within ['A','Z'+1) = [65,91)
+        auto ctx = execute_with_stdlib("77 65 91 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True
+    }
+
+    SECTION("WITHIN - digit range") {
+        // Check if '5' (53) is within ['0','9'+1) = [48,58)
+        auto ctx = execute_with_stdlib("53 48 58 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True
+    }
+
+    SECTION("WITHIN - not a digit") {
+        // Check if 'A' (65) is within ['0','9'+1) = [48,58)
+        auto ctx = execute_with_stdlib("65 48 58 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // False
+    }
+
+    SECTION("WITHIN - large positive range") {
+        auto ctx = execute_with_stdlib("50000 10000 100000 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True
+    }
+
+    SECTION("WITHIN - percentage range (0-100)") {
+        auto ctx = execute_with_stdlib("50 0 101 WITHIN");  // 50% in [0,101)
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True
+    }
+
+    SECTION("WITHIN - percentage out of range") {
+        auto ctx = execute_with_stdlib("150 0 101 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // False
+    }
+
+    SECTION("WITHIN - with expression") {
+        auto ctx = execute_with_stdlib("3 4 + 5 10 WITHIN");  // Is 7 within [5,10)?
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True
+    }
+
+    SECTION("WITHIN - range boundaries as expressions") {
+        auto ctx = execute_with_stdlib("50 10 5 * 20 5 * WITHIN");  // 50 within [50,100)?
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True (at lower bound)
+    }
+
+    SECTION("WITHIN - used in conditional") {
+        auto ctx = execute_with_stdlib("7 5 10 WITHIN IF 999 ELSE 0 THEN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 999);  // Branch taken
+    }
+
+    SECTION("WITHIN - used in conditional (false case)") {
+        auto ctx = execute_with_stdlib("3 5 10 WITHIN IF 999 ELSE 0 THEN");
+        REQUIRE(ctx.dsp == 1);
+        // 3 is below 5, (3-5)=-2 as unsigned is NOT < (10-5)=5
+        REQUIRE(ctx.data_stack[0] == 0);  // Else branch taken
+    }
+
+    SECTION("JIT mode - WITHIN") {
+        auto ctx = execute_with_stdlib(": IN-RANGE WITHIN ; 7 5 10 IN-RANGE", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True
+    }
+
+    SECTION("Interpreter mode - WITHIN") {
+        auto ctx = execute_with_stdlib(": IN-RANGE WITHIN ; 7 5 10 IN-RANGE", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True
+    }
+
+    SECTION("WITHIN - array index validation") {
+        // Check if index 5 is valid for array size 10 [0,10)
+        auto ctx = execute_with_stdlib("5 0 10 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // Valid index
+    }
+
+    SECTION("WITHIN - array index out of bounds") {
+        auto ctx = execute_with_stdlib("10 0 10 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Out of bounds
+    }
+
+    SECTION("WITHIN - temperature range check") {
+        // Check if 72°F is comfortable [68,78)
+        auto ctx = execute_with_stdlib("72 68 78 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // Comfortable
+    }
+
+    SECTION("WITHIN - wrapping behavior understanding") {
+        // WITHIN uses unsigned comparison logic internally
+        // Testing edge case understanding
+        auto ctx = execute_with_stdlib("5 0 10 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);
+    }
+
+    SECTION("WITHIN - one past upper bound") {
+        auto ctx = execute_with_stdlib("11 5 10 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Just past range
+    }
+
+    SECTION("WITHIN - one before lower bound") {
+        auto ctx = execute_with_stdlib("4 5 10 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        // (4-5)=-1 as unsigned is NOT < (10-5)=5
+        REQUIRE(ctx.data_stack[0] == 0);  // False
+    }
+
+    SECTION("WITHIN - combined with MIN/MAX") {
+        // Clamp then check: clamp 3 to [5,10], then check if result is in [5,10)
+        auto ctx = execute_with_stdlib("3 5 MAX 10 MIN 5 10 WITHIN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 5 (clamped) is in [5,10)
+    }
+}
+
+TEST_CASE("Standard Library - ROT", "[stdlib][rot]") {
+    SECTION("ROT basic operation") {
+        auto ctx = execute_with_stdlib("1 2 3 ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 2);
+        REQUIRE(ctx.data_stack[1] == 3);
+        REQUIRE(ctx.data_stack[2] == 1);
+    }
+
+    SECTION("ROT with different values") {
+        auto ctx = execute_with_stdlib("10 20 30 ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 20);
+        REQUIRE(ctx.data_stack[1] == 30);
+        REQUIRE(ctx.data_stack[2] == 10);
+    }
+
+    SECTION("ROT with negative numbers") {
+        auto ctx = execute_with_stdlib("-5 -10 -15 ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == -10);
+        REQUIRE(ctx.data_stack[1] == -15);
+        REQUIRE(ctx.data_stack[2] == -5);
+    }
+
+    SECTION("ROT with mixed positive and negative") {
+        auto ctx = execute_with_stdlib("5 -10 15 ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == -10);
+        REQUIRE(ctx.data_stack[1] == 15);
+        REQUIRE(ctx.data_stack[2] == 5);
+    }
+
+    SECTION("ROT with zeros") {
+        auto ctx = execute_with_stdlib("0 1 2 ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 0);
+    }
+
+    SECTION("Multiple ROT operations") {
+        auto ctx = execute_with_stdlib("1 2 3 ROT ROT");
+        REQUIRE(ctx.dsp == 3);
+        // First ROT: 1 2 3 -> 2 3 1
+        // Second ROT: 2 3 1 -> 3 1 2
+        REQUIRE(ctx.data_stack[0] == 3);
+        REQUIRE(ctx.data_stack[1] == 1);
+        REQUIRE(ctx.data_stack[2] == 2);
+    }
+
+    SECTION("Three ROT operations (full cycle)") {
+        auto ctx = execute_with_stdlib("1 2 3 ROT ROT ROT");
+        REQUIRE(ctx.dsp == 3);
+        // After 3 ROTs, should be back to original order
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+    }
+
+    SECTION("ROT with more items on stack") {
+        auto ctx = execute_with_stdlib("100 200 300 400 500 ROT");
+        REQUIRE(ctx.dsp == 5);
+        REQUIRE(ctx.data_stack[0] == 100);
+        REQUIRE(ctx.data_stack[1] == 200);
+        REQUIRE(ctx.data_stack[2] == 400);  // Third from top
+        REQUIRE(ctx.data_stack[3] == 500);  // Second from top
+        REQUIRE(ctx.data_stack[4] == 300);  // Was top, now at top
+    }
+
+    SECTION("ROT with expressions") {
+        auto ctx = execute_with_stdlib("1 2 + 3 4 + 5 6 + ROT");  // 3 7 11 ROT
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 7);
+        REQUIRE(ctx.data_stack[1] == 11);
+        REQUIRE(ctx.data_stack[2] == 3);
+    }
+
+    SECTION("ROT in user-defined word") {
+        auto ctx = execute_with_stdlib(": THIRD ROT ROT ; 10 20 30 THIRD");
+        REQUIRE(ctx.dsp == 3);
+        // THIRD extracts third item: ROT ROT brings third to top
+        // 10 20 30 -> (ROT) 20 30 10 -> (ROT) 30 10 20
+        REQUIRE(ctx.data_stack[0] == 30);
+        REQUIRE(ctx.data_stack[1] == 10);
+        REQUIRE(ctx.data_stack[2] == 20);
+    }
+
+    SECTION("ROT combined with SWAP") {
+        auto ctx = execute_with_stdlib("1 2 3 ROT SWAP");
+        REQUIRE(ctx.dsp == 3);
+        // ROT: 1 2 3 -> 2 3 1
+        // SWAP: 2 3 1 -> 2 1 3
+        REQUIRE(ctx.data_stack[0] == 2);
+        REQUIRE(ctx.data_stack[1] == 1);
+        REQUIRE(ctx.data_stack[2] == 3);
+    }
+
+    SECTION("ROT combined with DROP") {
+        auto ctx = execute_with_stdlib("1 2 3 ROT DROP");
+        REQUIRE(ctx.dsp == 2);
+        // ROT: 1 2 3 -> 2 3 1
+        // DROP: 2 3 1 -> 2 3
+        REQUIRE(ctx.data_stack[0] == 2);
+        REQUIRE(ctx.data_stack[1] == 3);
+    }
+
+    SECTION("ROT combined with DUP") {
+        auto ctx = execute_with_stdlib("1 2 3 ROT DUP");
+        REQUIRE(ctx.dsp == 4);
+        // ROT: 1 2 3 -> 2 3 1
+        // DUP: 2 3 1 -> 2 3 1 1
+        REQUIRE(ctx.data_stack[0] == 2);
+        REQUIRE(ctx.data_stack[1] == 3);
+        REQUIRE(ctx.data_stack[2] == 1);
+        REQUIRE(ctx.data_stack[3] == 1);
+    }
+
+    SECTION("ROT for reordering calculation") {
+        // Calculate: (a * c) - b where stack is a b c
+        auto ctx = execute_with_stdlib("5 3 10 ROT * SWAP -");
+        // 5 3 10 -> (ROT) 3 10 5 -> (*) 3 50 -> (SWAP) 50 3 -> (-) 47
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 47);
+    }
+
+    SECTION("JIT mode - ROT") {
+        auto ctx = execute_with_stdlib(": TEST-ROT ROT ; 7 8 9 TEST-ROT", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 8);
+        REQUIRE(ctx.data_stack[1] == 9);
+        REQUIRE(ctx.data_stack[2] == 7);
+    }
+
+    SECTION("Interpreter mode - ROT") {
+        auto ctx = execute_with_stdlib(": TEST-ROT ROT ; 7 8 9 TEST-ROT", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 8);
+        REQUIRE(ctx.data_stack[1] == 9);
+        REQUIRE(ctx.data_stack[2] == 7);
+    }
+
+    SECTION("ROT vs manual equivalent") {
+        auto ctx = execute_with_stdlib("1 2 3 ROT 10 20 30 >R SWAP R> SWAP");
+        REQUIRE(ctx.dsp == 6);
+        // Both should produce same result
+        REQUIRE(ctx.data_stack[0] == 2);   // From ROT
+        REQUIRE(ctx.data_stack[1] == 3);
+        REQUIRE(ctx.data_stack[2] == 1);
+        REQUIRE(ctx.data_stack[3] == 20);  // From manual version
+        REQUIRE(ctx.data_stack[4] == 30);
+        REQUIRE(ctx.data_stack[5] == 10);
+    }
+
+    SECTION("ROT with large numbers") {
+        auto ctx = execute_with_stdlib("100000 200000 300000 ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 200000);
+        REQUIRE(ctx.data_stack[1] == 300000);
+        REQUIRE(ctx.data_stack[2] == 100000);
+    }
+
+    SECTION("ROT inverse property") {
+        // ROT ROT ROT should return to original order
+        auto ctx = execute_with_stdlib("42 84 126 DUP DUP DUP ROT ROT ROT");
+        REQUIRE(ctx.dsp == 6);
+        // First three: 42 84 126
+        // Second three (after DUP DUP DUP): 126 126 126
+        // After ROT ROT ROT on top three: back to 126 126 126
+        REQUIRE(ctx.data_stack[3] == 126);
+        REQUIRE(ctx.data_stack[4] == 126);
+        REQUIRE(ctx.data_stack[5] == 126);
     }
 }
 

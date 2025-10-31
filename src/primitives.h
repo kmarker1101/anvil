@@ -207,25 +207,6 @@ inline void emit_over(llvm::IRBuilder<> &builder, llvm::Value *data_stack_ptr,
   store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, n1);
 }
 
-// Emit LLVM IR for the ROT primitive
-// Stack effect: ( n1 n2 n3 -- n2 n3 n1 )
-// Rotates the top three stack values
-inline void emit_rot(llvm::IRBuilder<> &builder, llvm::Value *data_stack_ptr,
-                     llvm::Value *dsp_ptr) {
-  // Load top three values
-  llvm::Value *n3 =
-      load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0); // Top
-  llvm::Value *n2 =
-      load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1); // Second
-  llvm::Value *n1 =
-      load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 2); // Third
-
-  // Rotate: n1 n2 n3 -> n2 n3 n1
-  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, n1); // n1 to top
-  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1, n3); // n3 to second
-  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 2, n2); // n2 to third
-}
-
 // Emit LLVM IR for the AND primitive
 // Stack effect: ( n1 n2 -- n1&n2 )
 // Bitwise AND of top two values
@@ -320,6 +301,30 @@ inline void emit_lt(llvm::IRBuilder<> &builder, llvm::Value *data_stack_ptr,
 
   // Convert i1 to int64: true -> -1, false -> 0 (Forth convention)
   llvm::Value *result = builder.CreateSExt(cmp, builder.getInt64Ty(), "lt_result");
+
+  // Pop one value (2 consumed, 1 produced = net -1)
+  adjust_dsp(builder, dsp_ptr, -1);
+
+  // Store result at new top
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, result);
+}
+
+// Emit LLVM IR for the U< primitive (unsigned less-than comparison)
+// Stack effect: ( u1 u2 -- flag )
+// Compares two values as unsigned: true if u1 < u2, false otherwise
+inline void emit_ult(llvm::IRBuilder<> &builder, llvm::Value *data_stack_ptr,
+                     llvm::Value *dsp_ptr) {
+  // Load top two values
+  llvm::Value *u2 =
+      load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0); // Top
+  llvm::Value *u1 =
+      load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1); // Second
+
+  // Compare: u1 < u2 (unsigned comparison)
+  llvm::Value *cmp = builder.CreateICmpULT(u1, u2, "ult_cmp");
+
+  // Convert i1 to int64: true -> -1, false -> 0 (Forth convention)
+  llvm::Value *result = builder.CreateSExt(cmp, builder.getInt64Ty(), "ult_result");
 
   // Pop one value (2 consumed, 1 produced = net -1)
   adjust_dsp(builder, dsp_ptr, -1);

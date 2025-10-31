@@ -113,6 +113,7 @@ set(STDLIB_FILES
     ${CMAKE_SOURCE_DIR}/forth/stdlib/00-stack.fth
     ${CMAKE_SOURCE_DIR}/forth/stdlib/10-arithmetic.fth
     ${CMAKE_SOURCE_DIR}/forth/stdlib/20-comparison.fth
+    ${CMAKE_SOURCE_DIR}/forth/stdlib/22-arithmetic-extended.fth
     ${CMAKE_SOURCE_DIR}/forth/stdlib/25-stack-advanced.fth
     ${CMAKE_SOURCE_DIR}/forth/stdlib/30-memory.fth
     ${CMAKE_SOURCE_DIR}/forth/stdlib/40-strings.fth

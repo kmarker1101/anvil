@@ -242,14 +242,6 @@ TEST_CASE("Compiler compiles stack primitives", "[compiler][primitives][stack]")
         REQUIRE(ctx.data_stack[2] == 10);
     }
 
-    SECTION("ROT") {
-        auto ctx = execute_forth("10 20 30 ROT");
-        REQUIRE(ctx.dsp == 3);
-        REQUIRE(ctx.data_stack[0] == 20);
-        REQUIRE(ctx.data_stack[1] == 30);
-        REQUIRE(ctx.data_stack[2] == 10);
-    }
-
     SECTION("Combined stack operations") {
         auto ctx = execute_forth("5 DUP * ");  // Square: 5 DUP * = 25
         REQUIRE(ctx.dsp == 1);
@@ -441,15 +433,6 @@ TEST_CASE("Compiler compiles user-defined words", "[compiler][definitions]") {
         auto ctx = execute_forth(": AVG + 2 /MOD SWAP DROP ; 10 20 AVG");
         REQUIRE(ctx.dsp == 1);
         REQUIRE(ctx.data_stack[0] == 15);
-    }
-
-    SECTION("User word with stack manipulation") {
-        // ROT ROT rotates third item to top: (a b c -- c a b)
-        auto ctx = execute_forth(": THIRD ROT ROT ; 10 20 30 THIRD");
-        REQUIRE(ctx.dsp == 3);
-        REQUIRE(ctx.data_stack[0] == 30);
-        REQUIRE(ctx.data_stack[1] == 10);
-        REQUIRE(ctx.data_stack[2] == 20);
     }
 
     SECTION("User word with control flow") {
