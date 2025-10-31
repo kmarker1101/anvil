@@ -1306,6 +1306,147 @@ inline void emit_parse(llvm::IRBuilder<> &builder,
   store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, length);
 }
 
+// CMOVE ( c-addr1 c-addr2 u -- )
+// Copy u bytes from c-addr1 to c-addr2, low to high addresses
+inline void emit_cmove(llvm::IRBuilder<> &builder,
+                       llvm::Value *data_stack_ptr,
+                       llvm::Value *dsp_ptr) {
+  using namespace llvm;
+
+  // Pop count (u), dest address (c-addr2), source address (c-addr1)
+  Value *count = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  Value *dest_addr = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1);
+  Value *src_addr = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 2);
+  adjust_dsp(builder, dsp_ptr, -3);
+
+  // Convert addresses to pointers
+  Value *src_ptr = builder.CreateIntToPtr(src_addr, PointerType::get(builder.getContext(), 0), "src_ptr");
+  Value *dest_ptr = builder.CreateIntToPtr(dest_addr, PointerType::get(builder.getContext(), 0), "dest_ptr");
+
+  // Use LLVM's memcpy intrinsic - inline, no function call
+  builder.CreateMemCpy(dest_ptr, MaybeAlign(1), src_ptr, MaybeAlign(1), count);
+}
+
+// CMOVE> ( c-addr1 c-addr2 u -- )
+// Copy u bytes from c-addr1 to c-addr2, high to low addresses (for overlapping)
+inline void emit_cmove_backward(llvm::IRBuilder<> &builder,
+                                 llvm::Value *data_stack_ptr,
+                                 llvm::Value *dsp_ptr) {
+  using namespace llvm;
+
+  // Pop count (u), dest address (c-addr2), source address (c-addr1)
+  Value *count = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  Value *dest_addr = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1);
+  Value *src_addr = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 2);
+  adjust_dsp(builder, dsp_ptr, -3);
+
+  // Convert addresses to pointers
+  Value *src_ptr = builder.CreateIntToPtr(src_addr, PointerType::get(builder.getContext(), 0), "src_ptr");
+  Value *dest_ptr = builder.CreateIntToPtr(dest_addr, PointerType::get(builder.getContext(), 0), "dest_ptr");
+
+  // Use LLVM's memmove intrinsic - handles overlapping regions, inline
+  builder.CreateMemMove(dest_ptr, MaybeAlign(1), src_ptr, MaybeAlign(1), count);
+}
+
+// FILL ( c-addr u char -- )
+// Fill u bytes starting at c-addr with character char
+inline void emit_fill(llvm::IRBuilder<> &builder,
+                      llvm::Value *data_stack_ptr,
+                      llvm::Value *dsp_ptr) {
+  using namespace llvm;
+
+  // Pop char, count (u), address (c-addr)
+  Value *fill_char = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  Value *count = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1);
+  Value *addr = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 2);
+  adjust_dsp(builder, dsp_ptr, -3);
+
+  // Convert to byte and pointer
+  Value *byte_val = builder.CreateTrunc(fill_char, builder.getInt8Ty(), "byte_val");
+  Value *ptr = builder.CreateIntToPtr(addr, PointerType::get(builder.getContext(), 0), "ptr");
+
+  // Use LLVM's memset intrinsic - inline
+  builder.CreateMemSet(ptr, byte_val, count, MaybeAlign(1));
+}
+
+// COMPARE ( c-addr1 u1 c-addr2 u2 -- n )
+// Compare two strings lexicographically
+// Return: n<0 if string1 < string2, n=0 if equal, n>0 if string1 > string2
+inline void emit_compare(llvm::IRBuilder<> &builder,
+                         llvm::Value *data_stack_ptr,
+                         llvm::Value *dsp_ptr) {
+  using namespace llvm;
+
+  // Pop u2, c-addr2, u1, c-addr1
+  Value *len2 = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  Value *addr2 = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1);
+  Value *len1 = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 2);
+  Value *addr1 = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 3);
+  adjust_dsp(builder, dsp_ptr, -3);  // Keep one slot for result
+
+  // Convert addresses to pointers
+  Value *ptr1 = builder.CreateIntToPtr(addr1, PointerType::get(builder.getContext(), 0), "ptr1");
+  Value *ptr2 = builder.CreateIntToPtr(addr2, PointerType::get(builder.getContext(), 0), "ptr2");
+
+  // Get minimum length
+  Value *min_len = builder.CreateSelect(
+      builder.CreateICmpULT(len1, len2), len1, len2, "min_len");
+
+  // Create blocks
+  llvm::Function *func = builder.GetInsertBlock()->getParent();
+  BasicBlock *entry_block = builder.GetInsertBlock();
+  BasicBlock *loop_header = BasicBlock::Create(builder.getContext(), "cmp_loop", func);
+  BasicBlock *loop_body = BasicBlock::Create(builder.getContext(), "cmp_body", func);
+  BasicBlock *bytes_differ = BasicBlock::Create(builder.getContext(), "cmp_differ", func);
+  BasicBlock *compare_lengths = BasicBlock::Create(builder.getContext(), "cmp_lengths", func);
+  BasicBlock *done = BasicBlock::Create(builder.getContext(), "cmp_done", func);
+
+  // Jump to loop header
+  builder.CreateBr(loop_header);
+
+  // Loop header - use PHI for index
+  builder.SetInsertPoint(loop_header);
+  PHINode *index_phi = builder.CreatePHI(builder.getInt64Ty(), 2, "index");
+  index_phi->addIncoming(builder.getInt64(0), entry_block);  // Initial value from entry
+
+  // Check if we've compared all common bytes
+  Value *continue_cmp = builder.CreateICmpULT(index_phi, min_len, "continue");
+  builder.CreateCondBr(continue_cmp, loop_body, compare_lengths);
+
+  // Loop body - compare bytes
+  builder.SetInsertPoint(loop_body);
+  Value *byte1_ptr = builder.CreateGEP(builder.getInt8Ty(), ptr1, index_phi, "b1_ptr");
+  Value *byte2_ptr = builder.CreateGEP(builder.getInt8Ty(), ptr2, index_phi, "b2_ptr");
+  Value *byte1 = builder.CreateLoad(builder.getInt8Ty(), byte1_ptr, "b1");
+  Value *byte2 = builder.CreateLoad(builder.getInt8Ty(), byte2_ptr, "b2");
+
+  Value *bytes_equal = builder.CreateICmpEQ(byte1, byte2, "eq");
+  Value *next_index = builder.CreateAdd(index_phi, builder.getInt64(1), "next_idx");
+  index_phi->addIncoming(next_index, loop_body);  // Update PHI for next iteration
+
+  builder.CreateCondBr(bytes_equal, loop_header, bytes_differ);
+
+  // Bytes differ - return difference
+  builder.SetInsertPoint(bytes_differ);
+  Value *b1_ext = builder.CreateZExt(byte1, builder.getInt64Ty(), "b1_ext");
+  Value *b2_ext = builder.CreateZExt(byte2, builder.getInt64Ty(), "b2_ext");
+  Value *diff = builder.CreateSub(b1_ext, b2_ext, "diff");
+  builder.CreateBr(done);
+
+  // All bytes equal - compare lengths
+  builder.SetInsertPoint(compare_lengths);
+  Value *len_diff = builder.CreateSub(len1, len2, "len_diff");
+  builder.CreateBr(done);
+
+  // Done - merge results
+  builder.SetInsertPoint(done);
+  PHINode *result_phi = builder.CreatePHI(builder.getInt64Ty(), 2, "result");
+  result_phi->addIncoming(diff, bytes_differ);
+  result_phi->addIncoming(len_diff, compare_lengths);
+
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, result_phi);
+}
+
 } // namespace anvil
 
 #endif // ANVIL_PRIMITIVES_H

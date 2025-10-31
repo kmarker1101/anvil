@@ -632,6 +632,13 @@ Currently implemented: **45 primitives**
 - `ACCEPT` - Read a line of input with backspace support ( c-addr +n1 -- +n2 )
 - `PARSE` - Parse string from input until delimiter ( char "ccc<char>" -- c-addr u )
 
+**String Manipulation (ANS Forth Core):**
+- `CMOVE` - Copy memory low-to-high ( c-addr1 c-addr2 u -- )
+- `CMOVE>` - Copy memory high-to-low for overlapping regions ( c-addr1 c-addr2 u -- )
+- `FILL` - Fill memory with byte value ( c-addr u char -- )
+- `COMPARE` - Compare two strings lexicographically ( c-addr1 u1 c-addr2 u2 -- n )
+  - Returns: n < 0 if str1 < str2, n = 0 if equal, n > 0 if str1 > str2
+
 All primitives emit LLVM IR directly (no function calls for stack operations).
 Primitives work identically in all three execution modes (Interpreter, JIT, AOT).
 

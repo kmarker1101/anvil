@@ -202,6 +202,23 @@ void initialize_primitives() {
     global_primitives.register_primitive("PARSE", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto tib, auto to_in, auto num_tib) {
         emit_parse(builder, data_stack, dsp, tib, to_in, num_tib);
     });
+
+    // String manipulation primitives
+    global_primitives.register_primitive("CMOVE", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+        emit_cmove(builder, data_stack, dsp);
+    });
+
+    global_primitives.register_primitive("CMOVE>", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+        emit_cmove_backward(builder, data_stack, dsp);
+    });
+
+    global_primitives.register_primitive("FILL", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+        emit_fill(builder, data_stack, dsp);
+    });
+
+    global_primitives.register_primitive("COMPARE", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+        emit_compare(builder, data_stack, dsp);
+    });
 }
 
 } // namespace anvil
