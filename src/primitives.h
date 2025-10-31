@@ -666,13 +666,16 @@ inline void emit_lit(llvm::IRBuilder<> &builder,
 //   void (*)(ExecutionContext*)
 inline void emit_execute(llvm::IRBuilder<> &builder,
                          llvm::Value *data_stack_ptr,
-                         llvm::Value *dsp_ptr,
-                         llvm::Value *ctx_ptr) {
+                         llvm::Value *dsp_ptr) {
   // Load the execution token (function pointer as int64) from top of stack
   llvm::Value *xt_int = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
 
   // Pop the execution token
   adjust_dsp(builder, dsp_ptr, -1);
+
+  // Get the context pointer from the current function's first argument
+  llvm::Function *current_func = builder.GetInsertBlock()->getParent();
+  llvm::Value *ctx_ptr = current_func->getArg(0);
 
   // Convert int64 to function pointer
   // Function signature: void (*)(ExecutionContext*)

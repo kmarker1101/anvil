@@ -17,6 +17,13 @@
 : CELL+ ( addr -- addr+8 ) 8 + ; \ Add one cell to address
 : +! ( n addr -- ) DUP @ ROT + SWAP ! ; \ Add to memory location
 
+\ Interpreter state
+\ STATE variable: 0 = interpreting, -1 = compiling
+VARIABLE STATE-VAR              \ STATE-VAR returns address of the variable
+
+\ Note: [ and ] would toggle STATE, but require IMMEDIATE flag
+\ which needs more infrastructure. For now, STATE-VAR is available.
+
 \ Output helpers
 CONSTANT BL 32              \ BL is the space character (ASCII 32)
 : SPACE ( -- ) BL EMIT ;    \ Output a single space

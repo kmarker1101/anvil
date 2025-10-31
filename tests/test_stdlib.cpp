@@ -812,3 +812,37 @@ TEST_CASE("Standard Library - String words", "[stdlib][strings]") {
         REQUIRE(ctx.data_stack[0] == 256);
     }
 }
+
+TEST_CASE("Standard Library - Interpreter state", "[stdlib][state]") {
+    // Note: EXECUTE and ' (tick) tests are disabled due to JIT address resolution issues
+    // The fundamental problem is that ' needs to capture function addresses at compile time,
+    // but JIT compilation happens after parsing. This requires runtime dictionary lookup.
+
+    SECTION("STATE-VAR provides access to interpreter state variable") {
+        auto ctx = execute_with_stdlib(
+            "STATE-VAR @"          // Read initial STATE value
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);    // Should be 0 (interpreting)
+    }
+
+    SECTION("STATE-VAR can be written and read") {
+        auto ctx = execute_with_stdlib(
+            "1 STATE-VAR ! "       // Set STATE to 1
+            "STATE-VAR @"          // Read it back
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1);    // Should read back as 1
+    }
+
+    SECTION("STATE-VAR value persists across operations") {
+        auto ctx = execute_with_stdlib(
+            "-1 STATE-VAR ! "      // Set STATE to -1 (compiling)
+            "42 99 + "              // Do some other operations
+            "DROP "                 // Clean up
+            "STATE-VAR @"          // Read STATE again
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);   // Should still be -1
+    }
+}

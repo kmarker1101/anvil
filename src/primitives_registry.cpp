@@ -216,8 +216,13 @@ void initialize_primitives() {
         emit_fill(builder, data_stack, dsp);
     });
 
-    global_primitives.register_primitive("COMPARE", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+    global_primitives.register_primitive("COMPARE", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto ctx_ptr) {
         emit_compare(builder, data_stack, dsp);
+    });
+
+    // Control flow
+    global_primitives.register_primitive("EXECUTE", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+        emit_execute(builder, data_stack, dsp);
     });
 }
 

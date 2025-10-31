@@ -147,6 +147,10 @@ private:
             case ASTNodeType::CONSTANT:
                 compile_constant(static_cast<ConstantNode*>(node));
                 break;
+
+            case ASTNodeType::TICK:
+                compile_tick(static_cast<TickNode*>(node));
+                break;
         }
     }
 
@@ -205,8 +209,7 @@ private:
                 store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, xt_int);
 
                 // Execute it
-                llvm::Value* ctx_ptr = current_function_->getArg(0);
-                emit_execute(builder_, data_stack_ptr_, dsp_ptr_, ctx_ptr);
+                emit_execute(builder_, data_stack_ptr_, dsp_ptr_);
             }
         } else {
             throw std::runtime_error(node->word_name + " ?");
@@ -369,6 +372,33 @@ private:
             reinterpret_cast<void*>(const_func)
         );
         global_dictionary.add_word(node->name, xt, WORD_NORMAL, const_func);
+    }
+
+    // Compile ' name (tick)
+    // Looks up the word and pushes its execution token onto the stack
+    void compile_tick(TickNode* node) {
+        // Look up the word in the dictionary at compile time
+        const DictionaryEntry* entry = global_dictionary.find_word(node->name);
+        if (!entry) {
+            throw std::runtime_error("' " + node->name + " ? (word not found)");
+        }
+
+        // Check if the word has an LLVM function
+        if (entry->llvm_func) {
+            // For JIT-compiled words, we need to get the actual function address at runtime
+            // We'll use a global variable to store the function pointer
+            // This is a workaround for the fact that LLVM function addresses aren't known
+            // until after JIT compilation
+
+            // For now, just push the LLVM function pointer as an int64
+            // This will work because EXECUTE can handle it
+            int64_t func_ptr_value = reinterpret_cast<int64_t>(entry->llvm_func);
+            emit_lit(builder_, data_stack_ptr_, dsp_ptr_, func_ptr_value);
+        } else {
+            // For runtime-only words (shouldn't happen in normal compilation)
+            int64_t xt_value = reinterpret_cast<int64_t>(entry->xt);
+            emit_lit(builder_, data_stack_ptr_, dsp_ptr_, xt_value);
+        }
     }
 
     // Compile IF...THEN

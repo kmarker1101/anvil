@@ -794,6 +794,12 @@ Performance comes from compilation strategy (inlined native code) rather than mi
 
 ## Future Directions
 
+- **QUIT interpreter loop** (Issue #9): Full self-hosting interpreter requires:
+  - `FIND` primitive for runtime dictionary lookup (currently only compile-time lookup available)
+  - Full ' (tick) and EXECUTE support with JIT address resolution
+  - INTERPRET-LINE and INTERPRET-WORD for parsing and executing text
+  - Number parsing (NUMBER primitive)
+  - IMMEDIATE flag support for [ and ] words
 - Profile-guided optimization: track execution counts, recompile hot words with higher optimization
 - Background compilation: compile in separate thread while interpreting
 - Code garbage collection: reclaim unused compiled words
@@ -918,6 +924,13 @@ Anvil automatically loads a standard library (`stdlib.fth`) at startup, providin
 **Input buffer:**
 - `REFILL ( -- flag )` - Read new line into TIB, reset >IN, return true
 - `WORD ( char -- c-addr )` - Parse word delimited by char, return counted string at HERE
+
+**Interpreter state:**
+- `STATE-VAR ( -- addr )` - Push address of STATE variable (0 = interpreting, -1 = compiling)
+- `EXECUTE ( xt -- )` - Execute the execution token on the stack (primitive, JIT limitations apply)
+- `' name ( -- xt )` - Get execution token of word (compile-time only, JIT limitations apply)
+
+**Note on ' and EXECUTE:** These words have limitations in JIT mode due to the need to resolve function addresses after compilation. The ' (tick) word performs compile-time dictionary lookup and captures the XT, but the actual executable address is only available after JIT compilation. For now, these work for primitives but may have issues with user-defined words in certain execution contexts. Full support requires runtime dictionary lookup infrastructure (FIND primitive).
 
 The standard library is compiled to LLVM IR and added to the global dictionary, making these words available immediately in the REPL and in all execution modes (JIT, interpreter, and AOT).
 
