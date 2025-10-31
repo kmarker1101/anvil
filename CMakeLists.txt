@@ -60,6 +60,8 @@ add_executable(anvil
     src/main.cpp
     src/dictionary.cpp
     src/primitives_registry.cpp
+    src/execution_engine.cpp
+    src/runtime_helpers.cpp
     src/terminal.c
 )
 target_link_libraries(anvil ${llvm_libs})
@@ -88,6 +90,8 @@ add_executable(anvil_tests
     tests/test_terminal.cpp
     src/dictionary.cpp
     src/primitives_registry.cpp
+    src/execution_engine.cpp
+    src/runtime_helpers.cpp
     src/terminal.c
 )
 target_link_libraries(anvil_tests PRIVATE Catch2::Catch2WithMain ${llvm_libs})

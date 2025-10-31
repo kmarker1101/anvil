@@ -376,29 +376,111 @@ private:
 
     // Compile ' name (tick)
     // Looks up the word and pushes its execution token onto the stack
+    // Now uses runtime FIND to get the correct JIT-compiled address
     void compile_tick(TickNode* node) {
-        // Look up the word in the dictionary at compile time
-        const DictionaryEntry* entry = global_dictionary.find_word(node->name);
-        if (!entry) {
-            throw std::runtime_error("' " + node->name + " ? (word not found)");
-        }
+        // Create a string literal in the data segment for the word name
+        llvm::Constant* name_str = llvm::ConstantDataArray::getString(
+            context_, node->name, false
+        );
 
-        // Check if the word has an LLVM function
-        if (entry->llvm_func) {
-            // For JIT-compiled words, we need to get the actual function address at runtime
-            // We'll use a global variable to store the function pointer
-            // This is a workaround for the fact that LLVM function addresses aren't known
-            // until after JIT compilation
+        llvm::GlobalVariable* name_global = new llvm::GlobalVariable(
+            module_,
+            name_str->getType(),
+            true,  // is constant
+            llvm::GlobalValue::PrivateLinkage,
+            name_str,
+            ".str.tick." + node->name
+        );
 
-            // For now, just push the LLVM function pointer as an int64
-            // This will work because EXECUTE can handle it
-            int64_t func_ptr_value = reinterpret_cast<int64_t>(entry->llvm_func);
-            emit_lit(builder_, data_stack_ptr_, dsp_ptr_, func_ptr_value);
-        } else {
-            // For runtime-only words (shouldn't happen in normal compilation)
-            int64_t xt_value = reinterpret_cast<int64_t>(entry->xt);
-            emit_lit(builder_, data_stack_ptr_, dsp_ptr_, xt_value);
-        }
+        // Get pointer to the string
+        llvm::Value* name_ptr = builder_.CreatePointerCast(
+            name_global,
+            llvm::PointerType::get(context_, 0),
+            "name_ptr"
+        );
+
+        // Convert pointer to int64 for the stack
+        llvm::Value* name_addr = builder_.CreatePtrToInt(
+            name_ptr,
+            builder_.getInt64Ty(),
+            "name_addr"
+        );
+
+        // Push string address onto stack
+        adjust_dsp(builder_, dsp_ptr_, 1);
+        store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, name_addr);
+
+        // Push string length onto stack
+        llvm::Value* name_len = builder_.getInt64(node->name.length());
+        adjust_dsp(builder_, dsp_ptr_, 1);
+        store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, name_len);
+
+        // Call FIND to look up the word at runtime
+        emit_find(builder_, data_stack_ptr_, dsp_ptr_);
+
+        // FIND returns ( xt flag )
+        // We need to check the flag and throw an error if not found
+        // For now, we'll just leave both on the stack
+        // The flag will indicate success (-1) or failure (0)
+
+        // Pop the flag
+        llvm::Value* flag = load_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0);
+        adjust_dsp(builder_, dsp_ptr_, -1);
+
+        // Create blocks for found and not-found cases
+        llvm::BasicBlock* found_block = llvm::BasicBlock::Create(
+            context_, "tick_found", current_function_
+        );
+        llvm::BasicBlock* not_found_block = llvm::BasicBlock::Create(
+            context_, "tick_not_found", current_function_
+        );
+
+        // Check if found (flag == -1)
+        llvm::Value* is_found = builder_.CreateICmpEQ(flag, builder_.getInt64(-1), "is_found");
+        builder_.CreateCondBr(is_found, found_block, not_found_block);
+
+        // Not found block: print error and exit
+        builder_.SetInsertPoint(not_found_block);
+
+        // Declare printf for error message
+        llvm::FunctionType* printf_type = llvm::FunctionType::get(
+            builder_.getInt32Ty(),
+            {llvm::PointerType::get(context_, 0)},
+            true
+        );
+        llvm::FunctionCallee printf_func = module_.getOrInsertFunction("printf", printf_type);
+
+        // Create error message
+        std::string error_msg = "' " + node->name + " ? (word not found)\n";
+        llvm::Constant* error_str = llvm::ConstantDataArray::getString(context_, error_msg, true);
+        llvm::GlobalVariable* error_global = new llvm::GlobalVariable(
+            module_,
+            error_str->getType(),
+            true,
+            llvm::GlobalValue::PrivateLinkage,
+            error_str,
+            ".str.tick.error"
+        );
+        llvm::Value* error_ptr = builder_.CreatePointerCast(
+            error_global,
+            llvm::PointerType::get(context_, 0)
+        );
+
+        builder_.CreateCall(printf_func, {error_ptr});
+
+        // Declare exit function
+        llvm::FunctionType* exit_type = llvm::FunctionType::get(
+            builder_.getVoidTy(),
+            {builder_.getInt32Ty()},
+            false
+        );
+        llvm::FunctionCallee exit_func = module_.getOrInsertFunction("exit", exit_type);
+        builder_.CreateCall(exit_func, {builder_.getInt32(1)});
+        builder_.CreateUnreachable();
+
+        // Found block: XT is already on stack, continue
+        builder_.SetInsertPoint(found_block);
+        // XT is now on top of stack, ready to be used
     }
 
     // Compile IF...THEN

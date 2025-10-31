@@ -694,6 +694,55 @@ inline void emit_execute(llvm::IRBuilder<> &builder,
   builder.CreateCall(func_type, func_ptr, {ctx_ptr});
 }
 
+// Emit LLVM IR for the FIND primitive
+// Stack effect: ( c-addr u -- xt flag )
+// Searches dictionary for word, returns XT and flag (-1 if found, 0 if not)
+inline void emit_find(llvm::IRBuilder<> &builder,
+                      llvm::Value *data_stack_ptr,
+                      llvm::Value *dsp_ptr) {
+  // Load length and address from stack
+  llvm::Value *len = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  llvm::Value *addr = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1);
+
+  // Pop both values
+  adjust_dsp(builder, dsp_ptr, -2);
+
+  // Convert int64 address to pointer
+  llvm::Type *char_ptr_type = llvm::PointerType::get(builder.getContext(), 0);
+  llvm::Value *str_ptr = builder.CreateIntToPtr(addr, char_ptr_type, "str_ptr");
+
+  // Declare the runtime helper function
+  llvm::Module *module = builder.GetInsertBlock()->getParent()->getParent();
+  llvm::FunctionType *find_func_type = llvm::FunctionType::get(
+      builder.getInt64Ty(),
+      {char_ptr_type, builder.getInt64Ty()},
+      false
+  );
+  llvm::FunctionCallee find_func = module->getOrInsertFunction(
+      "anvil_find_word", find_func_type
+  );
+
+  // Call the runtime helper
+  llvm::Value *xt = builder.CreateCall(find_func, {str_ptr, len}, "xt");
+
+  // Check if found (xt != 0)
+  llvm::Value *found = builder.CreateICmpNE(xt, builder.getInt64(0), "found");
+  llvm::Value *flag = builder.CreateSelect(
+      found,
+      builder.getInt64(-1),  // Found: return -1
+      builder.getInt64(0),   // Not found: return 0
+      "flag"
+  );
+
+  // Push XT onto stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, xt);
+
+  // Push flag onto stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, flag);
+}
+
 // ============================================================================
 // String/IO primitives
 // ============================================================================

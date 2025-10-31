@@ -813,11 +813,7 @@ TEST_CASE("Standard Library - String words", "[stdlib][strings]") {
     }
 }
 
-TEST_CASE("Standard Library - Interpreter state", "[stdlib][state]") {
-    // Note: EXECUTE and ' (tick) tests are disabled due to JIT address resolution issues
-    // The fundamental problem is that ' needs to capture function addresses at compile time,
-    // but JIT compilation happens after parsing. This requires runtime dictionary lookup.
-
+TEST_CASE("Standard Library - Interpreter state and execution", "[stdlib][state][execute]") {
     SECTION("STATE-VAR provides access to interpreter state variable") {
         auto ctx = execute_with_stdlib(
             "STATE-VAR @"          // Read initial STATE value
@@ -844,5 +840,36 @@ TEST_CASE("Standard Library - Interpreter state", "[stdlib][state]") {
         );
         REQUIRE(ctx.dsp == 1);
         REQUIRE(ctx.data_stack[0] == -1);   // Should still be -1
+    }
+
+    // TODO: Add proper FIND test with string in memory
+
+    SECTION("' (tick) gets execution token and EXECUTE calls it") {
+        auto ctx = execute_with_stdlib(
+            ": TEST-WORD 42 ; "      // Define a word that pushes 42
+            "' TEST-WORD EXECUTE"    // Get XT and execute it
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);
+    }
+
+    SECTION("' and EXECUTE work with nested words") {
+        auto ctx = execute_with_stdlib(
+            ": INNER 10 20 + ; "     // Word that adds 10 + 20
+            "' INNER EXECUTE"        // Execute it
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 30);
+    }
+
+    SECTION("' and EXECUTE preserve stack correctly") {
+        auto ctx = execute_with_stdlib(
+            "100 "                   // Put value on stack
+            ": PUSHVAL 99 ; "        // Word that pushes a value
+            "' PUSHVAL EXECUTE"      // Execute it
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 100);  // Original value
+        REQUIRE(ctx.data_stack[1] == 99);   // Value from executed word
     }
 }

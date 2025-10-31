@@ -17,12 +17,21 @@
 : CELL+ ( addr -- addr+8 ) 8 + ; \ Add one cell to address
 : +! ( n addr -- ) DUP @ ROT + SWAP ! ; \ Add to memory location
 
-\ Interpreter state
+\ ============================================================================
+\ Interpreter Infrastructure (Issue #9)
+\ ============================================================================
+
 \ STATE variable: 0 = interpreting, -1 = compiling
 VARIABLE STATE-VAR              \ STATE-VAR returns address of the variable
 
-\ Note: [ and ] would toggle STATE, but require IMMEDIATE flag
-\ which needs more infrastructure. For now, STATE-VAR is available.
+\ Primitives available:
+\ - FIND ( c-addr u -- xt flag ) - Find word in dictionary
+\ - EXECUTE ( xt -- ) - Execute an execution token
+\ - ' name - Get execution token of word (now works with JIT!)
+
+\ Note: [ and ] would toggle STATE, but require IMMEDIATE flag support
+\ Note: Full QUIT/INTERPRET-LINE requires NUMBER primitive for parsing
+\ Note: For now, these building blocks are available for custom interpreters
 
 \ Output helpers
 CONSTANT BL 32              \ BL is the space character (ASCII 32)

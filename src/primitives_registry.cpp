@@ -224,6 +224,11 @@ void initialize_primitives() {
     global_primitives.register_primitive("EXECUTE", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
         emit_execute(builder, data_stack, dsp);
     });
+
+    // Dictionary lookup
+    global_primitives.register_primitive("FIND", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+        emit_find(builder, data_stack, dsp);
+    });
 }
 
 } // namespace anvil
