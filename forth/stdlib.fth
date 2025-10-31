@@ -112,6 +112,7 @@ VARIABLE STATE-VAR
             \ Print error message: word_name followed by " ?"
             TYPE        \ Print the word name
             ."  ?" CR   \ Print " ?" and newline
+            ABORT       \ Clear stacks and recover
         THEN
     THEN
 ;

@@ -863,11 +863,12 @@ make test
 ```
 
 **Test Coverage:**
-- 232 total tests, all passing (100%)
+- 233 total tests, all passing (100%)
 - All primitive tests run in both JIT and Interpreter modes automatically
 - Stdlib words tested in both modes
 - Ensures semantic consistency across execution modes
 - Complete Issue #9 test coverage for QUIT interpreter loop
+- Error recovery primitives (ABORT, DSP!, RSP!) tested
 
 **Test Organization:**
 - `tests/test_primitives.cpp` - All primitives tested in JIT + Interpreter modes
@@ -945,7 +946,14 @@ Anvil automatically loads a standard library (`stdlib.fth`) at startup, providin
 - `INTERPRET-LINE ( -- )` - Process one line by parsing and interpreting words from TIB
 - `QUIT ( -- )` - Main interpreter loop: REFILL→INTERPRET-LINE with "ok" prompts
 
-**QUIT Loop:** Anvil now has a complete QUIT interpreter loop infrastructure. QUIT reads lines with REFILL, processes them with INTERPRET-LINE (which parses words and calls INTERPRET-WORD), and displays "ok" prompts after successful interpretation. INTERPRET-WORD uses FIND for dictionary lookup with proper JIT address resolution, falls back to NUMBER for numeric literals, and prints "word ?" error messages for undefined words. The [ and ] primitives manage STATE for future Forth-side compilation support.
+**QUIT Loop:** Anvil now has a complete QUIT interpreter loop infrastructure with error recovery. QUIT reads lines with REFILL, processes them with INTERPRET-LINE (which parses words and calls INTERPRET-WORD), and displays "ok" prompts after successful interpretation. INTERPRET-WORD uses FIND for dictionary lookup with proper JIT address resolution, falls back to NUMBER for numeric literals, prints "word ?" error messages for undefined words, and calls ABORT to clear stacks and recover. The [ and ] primitives manage STATE for future Forth-side compilation support.
+
+**Error Recovery:**
+- `ABORT ( -- )` - Clears both data and return stacks by resetting pointers to 0
+- `DSP! ( n -- )` - Sets data stack pointer to n (for manual stack management)
+- `RSP! ( n -- )` - Sets return stack pointer to n (for manual stack management)
+
+These primitives ensure the REPL can recover gracefully from errors without crashing or leaving garbage on the stacks.
 
 The standard library is compiled to LLVM IR and added to the global dictionary, making these words available immediately in the REPL and in all execution modes (JIT, interpreter, and AOT).
 

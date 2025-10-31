@@ -1133,3 +1133,38 @@ TEST_CASE("Standard Library - STATE workflow", "[stdlib][state][workflow]") {
         REQUIRE(ctx.data_stack[2] == 0);   // After setting back
     }
 }
+
+TEST_CASE("Standard Library - Error recovery primitives", "[stdlib][abort][error-recovery]") {
+    SECTION("ABORT clears data stack") {
+        auto ctx = execute_with_stdlib(
+            "1 2 3 4 5 "  // Push 5 items
+            "ABORT"       // Clear stacks
+        );
+        REQUIRE(ctx.dsp == 0);  // Stack should be empty
+    }
+
+    SECTION("ABORT clears return stack") {
+        auto ctx = execute_with_stdlib(
+            "1 >R 2 >R 3 >R "  // Push 3 items to return stack
+            "ABORT"             // Clear stacks
+        );
+        REQUIRE(ctx.rsp == 0);  // Return stack should be empty
+        REQUIRE(ctx.dsp == 0);  // Data stack should be empty too
+    }
+
+    SECTION("DSP! sets data stack pointer") {
+        auto ctx = execute_with_stdlib(
+            "1 2 3 4 5 "  // Push 5 items (dsp = 5)
+            "0 DSP!"      // Reset DSP to 0
+        );
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION("RSP! sets return stack pointer") {
+        auto ctx = execute_with_stdlib(
+            "1 >R 2 >R 3 >R "  // Push to return stack (rsp = 3)
+            "0 RSP!"           // Reset RSP to 0
+        );
+        REQUIRE(ctx.rsp == 0);
+    }
+}

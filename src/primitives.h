@@ -1599,6 +1599,53 @@ inline void emit_right_bracket(llvm::IRBuilder<> &builder,
   builder.CreateStore(builder.getInt64(-1), state_ptr);
 }
 
+// ============================================================================
+// Stack reset and error recovery primitives
+// ============================================================================
+
+// Emit LLVM IR for the DSP! primitive (set data stack pointer)
+// Stack effect: ( n -- )
+// Sets the data stack pointer to n
+inline void emit_dsp_store(llvm::IRBuilder<> &builder,
+                           llvm::Value *data_stack_ptr,
+                           llvm::Value *dsp_ptr) {
+  // Load the new DSP value from stack
+  llvm::Value *new_dsp = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+
+  // Store it to the DSP pointer
+  builder.CreateStore(new_dsp, dsp_ptr);
+}
+
+// Emit LLVM IR for the RSP! primitive (set return stack pointer)
+// Stack effect: ( n -- )
+// Sets the return stack pointer to n
+inline void emit_rsp_store(llvm::IRBuilder<> &builder,
+                           llvm::Value *data_stack_ptr,
+                           llvm::Value *dsp_ptr,
+                           llvm::Value *rsp_ptr) {
+  // Load the new RSP value from data stack
+  llvm::Value *new_rsp = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+
+  // Pop from data stack
+  adjust_dsp(builder, dsp_ptr, -1);
+
+  // Store it to the RSP pointer
+  builder.CreateStore(new_rsp, rsp_ptr);
+}
+
+// Emit LLVM IR for the ABORT primitive
+// Stack effect: ( -- )
+// Clears both stacks by resetting pointers to 0
+inline void emit_abort(llvm::IRBuilder<> &builder,
+                       llvm::Value *dsp_ptr,
+                       llvm::Value *rsp_ptr) {
+  // Reset data stack pointer to 0
+  builder.CreateStore(builder.getInt64(0), dsp_ptr);
+
+  // Reset return stack pointer to 0
+  builder.CreateStore(builder.getInt64(0), rsp_ptr);
+}
+
 } // namespace anvil
 
 #endif // ANVIL_PRIMITIVES_H
