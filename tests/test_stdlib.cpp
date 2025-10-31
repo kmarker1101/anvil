@@ -356,6 +356,103 @@ TEST_CASE("Standard Library - / (division)", "[stdlib][divide]") {
     }
 }
 
+TEST_CASE("Standard Library - 1+ (increment)", "[stdlib][1+]") {
+    SECTION("Increment positive number") {
+        auto ctx = execute_with_stdlib("5 1+");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 6);
+    }
+
+    SECTION("Increment from zero") {
+        auto ctx = execute_with_stdlib("0 1+");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1);
+    }
+
+    SECTION("Increment negative number to zero") {
+        auto ctx = execute_with_stdlib("-1 1+");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("Increment negative number") {
+        auto ctx = execute_with_stdlib("-5 1+");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -4);
+    }
+
+    SECTION("Increment large number") {
+        auto ctx = execute_with_stdlib("999 1+");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1000);
+    }
+
+    SECTION("Multiple increments") {
+        auto ctx = execute_with_stdlib("5 1+ 1+ 1+");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 8);  // 5+1+1+1 = 8
+    }
+
+    SECTION("Increment in expression") {
+        auto ctx = execute_with_stdlib("20 1+ 5 +");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 26);  // (20+1)+5 = 21+5 = 26
+    }
+
+    SECTION("Increment with DUP") {
+        auto ctx = execute_with_stdlib("8 DUP 1+");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 8);
+        REQUIRE(ctx.data_stack[1] == 9);  // Original 8, then 8+1=9
+    }
+
+    SECTION("Increment in JIT mode") {
+        auto ctx = execute_with_stdlib("42 1+", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 43);
+    }
+
+    SECTION("Increment in Interpreter mode") {
+        auto ctx = execute_with_stdlib("42 1+", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 43);
+    }
+
+    SECTION("Increment used in counter pattern") {
+        // Simulating count-up: 1 2 3
+        auto ctx = execute_with_stdlib("0 1+ DUP 1+ DUP 1+");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+    }
+
+    SECTION("Increment with addition") {
+        auto ctx = execute_with_stdlib("10 1+ 5 +");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 16);  // (10+1)+5 = 11+5 = 16
+    }
+
+    SECTION("Verify 1+ is equivalent to 1 +") {
+        auto ctx = execute_with_stdlib("15 1+ 15 1 +");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 16);  // 15 1+
+        REQUIRE(ctx.data_stack[1] == 16);  // 15 1 +
+    }
+
+    SECTION("1+ and 1- are inverses") {
+        auto ctx = execute_with_stdlib("42 1+ 1-");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);  // Back to original
+    }
+
+    SECTION("1- and 1+ are inverses") {
+        auto ctx = execute_with_stdlib("42 1- 1+");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);  // Back to original
+    }
+}
+
 TEST_CASE("Standard Library - 1- (decrement)", "[stdlib][1-]") {
     SECTION("Decrement positive number") {
         auto ctx = execute_with_stdlib("5 1-");
@@ -518,6 +615,163 @@ TEST_CASE("Standard Library - OVER", "[stdlib][over]") {
         auto ctx = execute_with_stdlib("3 7 OVER + SWAP DROP");
         REQUIRE(ctx.dsp == 1);
         REQUIRE(ctx.data_stack[0] == 10);
+    }
+}
+
+TEST_CASE("Standard Library - PICK", "[stdlib][pick]") {
+    SECTION("PICK 0 (equivalent to DUP)") {
+        auto ctx = execute_with_stdlib("10 20 30 0 PICK");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+        REQUIRE(ctx.data_stack[2] == 30);
+        REQUIRE(ctx.data_stack[3] == 30);  // Copied top
+    }
+
+    SECTION("PICK 1 (equivalent to OVER)") {
+        auto ctx = execute_with_stdlib("10 20 30 1 PICK");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+        REQUIRE(ctx.data_stack[2] == 30);
+        REQUIRE(ctx.data_stack[3] == 20);  // Copied second
+    }
+
+    SECTION("PICK 2 (third from top)") {
+        auto ctx = execute_with_stdlib("10 20 30 2 PICK");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+        REQUIRE(ctx.data_stack[2] == 30);
+        REQUIRE(ctx.data_stack[3] == 10);  // Copied third
+    }
+
+    SECTION("PICK 3 (fourth from top)") {
+        auto ctx = execute_with_stdlib("5 10 20 30 3 PICK");
+        REQUIRE(ctx.dsp == 5);
+        REQUIRE(ctx.data_stack[0] == 5);
+        REQUIRE(ctx.data_stack[1] == 10);
+        REQUIRE(ctx.data_stack[2] == 20);
+        REQUIRE(ctx.data_stack[3] == 30);
+        REQUIRE(ctx.data_stack[4] == 5);  // Copied fourth
+    }
+
+    SECTION("PICK 4 (fifth from top)") {
+        auto ctx = execute_with_stdlib("1 5 10 20 30 4 PICK");
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 5);
+        REQUIRE(ctx.data_stack[2] == 10);
+        REQUIRE(ctx.data_stack[3] == 20);
+        REQUIRE(ctx.data_stack[4] == 30);
+        REQUIRE(ctx.data_stack[5] == 1);  // Copied fifth
+    }
+
+    SECTION("PICK with negative numbers") {
+        auto ctx = execute_with_stdlib("-10 -20 -30 1 PICK");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == -10);
+        REQUIRE(ctx.data_stack[1] == -20);
+        REQUIRE(ctx.data_stack[2] == -30);
+        REQUIRE(ctx.data_stack[3] == -20);
+    }
+
+    SECTION("PICK with zeros") {
+        auto ctx = execute_with_stdlib("0 0 0 2 PICK");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 0);
+        REQUIRE(ctx.data_stack[1] == 0);
+        REQUIRE(ctx.data_stack[2] == 0);
+        REQUIRE(ctx.data_stack[3] == 0);
+    }
+
+    SECTION("PICK in expression") {
+        auto ctx = execute_with_stdlib("5 10 15 1 PICK +");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 5);
+        REQUIRE(ctx.data_stack[1] == 10);
+        REQUIRE(ctx.data_stack[2] == 25);  // 15 + 10
+    }
+
+    SECTION("Multiple PICK operations") {
+        auto ctx = execute_with_stdlib("10 20 30 2 PICK 1 PICK");
+        REQUIRE(ctx.dsp == 5);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+        REQUIRE(ctx.data_stack[2] == 30);
+        REQUIRE(ctx.data_stack[3] == 10);  // 2 PICK copied 10
+        REQUIRE(ctx.data_stack[4] == 30);  // 1 PICK copied 30
+    }
+
+    SECTION("PICK 0 multiple times") {
+        auto ctx = execute_with_stdlib("42 0 PICK 0 PICK 0 PICK");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 42);
+        REQUIRE(ctx.data_stack[1] == 42);
+        REQUIRE(ctx.data_stack[2] == 42);
+        REQUIRE(ctx.data_stack[3] == 42);
+    }
+
+    SECTION("PICK in JIT mode") {
+        auto ctx = execute_with_stdlib("100 200 300 1 PICK", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 100);
+        REQUIRE(ctx.data_stack[1] == 200);
+        REQUIRE(ctx.data_stack[2] == 300);
+        REQUIRE(ctx.data_stack[3] == 200);
+    }
+
+    SECTION("PICK in Interpreter mode") {
+        auto ctx = execute_with_stdlib("100 200 300 1 PICK", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 100);
+        REQUIRE(ctx.data_stack[1] == 200);
+        REQUIRE(ctx.data_stack[2] == 300);
+        REQUIRE(ctx.data_stack[3] == 200);
+    }
+
+    SECTION("PICK deep stack") {
+        auto ctx = execute_with_stdlib("1 2 3 4 5 6 7 8 9 10 5 PICK");
+        REQUIRE(ctx.dsp == 11);
+        REQUIRE(ctx.data_stack[4] == 5);
+        REQUIRE(ctx.data_stack[10] == 5);  // Copied 5th from top
+    }
+
+    SECTION("PICK used in word definition") {
+        auto ctx = execute_with_stdlib(": THIRD 2 PICK ; 10 20 30 THIRD");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+        REQUIRE(ctx.data_stack[2] == 30);
+        REQUIRE(ctx.data_stack[3] == 10);
+    }
+
+    SECTION("Verify PICK is recursive (uses RECURSE)") {
+        // Deep pick to ensure recursion works
+        auto ctx = execute_with_stdlib("1 2 3 4 5 6 7 8 9 10 9 PICK");
+        REQUIRE(ctx.dsp == 11);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[10] == 1);  // 9 PICK gets the bottom
+    }
+
+    SECTION("PICK vs manual equivalent for index 0") {
+        auto ctx = execute_with_stdlib("42 0 PICK 42 DUP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 42);
+        REQUIRE(ctx.data_stack[1] == 42);  // 0 PICK result
+        REQUIRE(ctx.data_stack[2] == 42);
+        REQUIRE(ctx.data_stack[3] == 42);  // DUP result
+    }
+
+    SECTION("PICK vs manual equivalent for index 1") {
+        auto ctx = execute_with_stdlib("10 20 1 PICK 10 20 OVER");
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+        REQUIRE(ctx.data_stack[2] == 10);  // 1 PICK result
+        REQUIRE(ctx.data_stack[3] == 10);
+        REQUIRE(ctx.data_stack[4] == 20);
+        REQUIRE(ctx.data_stack[5] == 10);  // OVER result
     }
 }
 

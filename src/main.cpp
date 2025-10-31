@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstdlib>
 #include <iomanip>
+#include <algorithm>
 
 // Platform-specific includes for cross-platform AOT compilation support
 // Supported platforms: macOS, Linux, Windows
@@ -715,10 +716,15 @@ int main(int argc, char** argv) {
         }
 
         // Handle special REPL commands (don't echo or use cursor positioning)
-        if (line == ".s") {
+        // Convert to uppercase for case-insensitive comparison
+        std::string upper_line = line;
+        std::transform(upper_line.begin(), upper_line.end(), upper_line.begin(),
+                      [](unsigned char c) { return std::toupper(c); });
+
+        if (upper_line == ".S") {
             print_stack(state.ctx);
             continue;
-        } else if (line == "words") {
+        } else if (upper_line == "WORDS") {
             // Get primitives and dictionary words
             auto primitives = global_primitives.get_all_names();
             auto dict_words = global_dictionary.get_all_words();
@@ -751,7 +757,7 @@ int main(int argc, char** argv) {
                 std::cout << "\n";
             }
             continue;
-        } else if (line == "help") {
+        } else if (upper_line == "HELP") {
             std::cout << "REPL commands:\n";
             std::cout << "  .s          Show stack\n";
             std::cout << "  words       List all defined words\n";

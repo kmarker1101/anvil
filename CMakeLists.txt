@@ -108,18 +108,26 @@ catch_discover_tests(anvil_tests)
 add_library(anvil_runtime STATIC src/runtime.c src/terminal.c)
 target_include_directories(anvil_runtime PUBLIC src)
 
-# Copy Forth libraries to build directory
-# Use custom command so it updates whenever the source file changes
-add_custom_command(
-    OUTPUT ${CMAKE_BINARY_DIR}/stdlib.fth
-    COMMAND ${CMAKE_COMMAND} -E copy
-        ${CMAKE_SOURCE_DIR}/forth/stdlib.fth
-        ${CMAKE_BINARY_DIR}/stdlib.fth
-    DEPENDS ${CMAKE_SOURCE_DIR}/forth/stdlib.fth
-    COMMENT "Copying stdlib.fth to build directory"
+# Concatenate stdlib files in dependency order
+set(STDLIB_FILES
+    ${CMAKE_SOURCE_DIR}/forth/stdlib/00-stack.fth
+    ${CMAKE_SOURCE_DIR}/forth/stdlib/10-arithmetic.fth
+    ${CMAKE_SOURCE_DIR}/forth/stdlib/20-comparison.fth
+    ${CMAKE_SOURCE_DIR}/forth/stdlib/25-stack-advanced.fth
+    ${CMAKE_SOURCE_DIR}/forth/stdlib/30-memory.fth
+    ${CMAKE_SOURCE_DIR}/forth/stdlib/40-strings.fth
+    ${CMAKE_SOURCE_DIR}/forth/stdlib/50-io.fth
+    ${CMAKE_SOURCE_DIR}/forth/stdlib/60-parsing.fth
 )
 
-# Create a custom target that depends on the copied file
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/stdlib.fth
+    COMMAND ${CMAKE_COMMAND} -E cat ${STDLIB_FILES} > ${CMAKE_BINARY_DIR}/stdlib.fth
+    DEPENDS ${STDLIB_FILES}
+    COMMENT "Concatenating stdlib files"
+)
+
+# Create a custom target that depends on the concatenated file
 add_custom_target(copy_stdlib ALL
     DEPENDS ${CMAKE_BINARY_DIR}/stdlib.fth
 )
