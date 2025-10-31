@@ -17,50 +17,6 @@
 : CELL+ ( addr -- addr+8 ) 8 + ; \ Add one cell to address
 : +! ( n addr -- ) DUP @ ROT + SWAP ! ; \ Add to memory location
 
-\ ============================================================================
-\ Interpreter Infrastructure (Issue #9)
-\ ============================================================================
-
-\ STATE variable: 0 = interpreting, -1 = compiling
-VARIABLE STATE-VAR              \ STATE-VAR returns address of the variable
-
-\ Primitives available:
-\ - FIND ( c-addr u -- xt flag ) - Find word in dictionary
-\ - EXECUTE ( xt -- ) - Execute an execution token
-\ - NUMBER ( c-addr u -- n flag ) - Parse string as number
-\ - ' name - Get execution token of word (now works with JIT!)
-
-\ INTERPRET-WORD: interpret a single word (address and length on stack)
-\ Stack effect: ( c-addr u -- )
-: INTERPRET-WORD ( c-addr u -- )
-    2DUP FIND           \ ( c-addr u c-addr u xt flag )
-    IF                  \ Found in dictionary
-        NIP NIP         \ ( xt ) - drop address and length
-        EXECUTE         \ Execute the word
-    ELSE                \ Not found, try as number
-        DROP            \ ( c-addr u ) - drop 0 xt
-        NUMBER          \ ( n flag )
-        IF              \ Valid number
-            \ In interpret mode, number is already on stack - done!
-            \ In compile mode, would need to compile as literal (not implemented)
-            STATE-VAR @ IF
-                \ TODO: Compile mode - need to compile number as literal
-                \ For now, just leave it on stack
-            THEN
-        ELSE
-            \ Not a word and not a number - error
-            DROP        \ Drop the 0 from NUMBER
-            \ Print error (would need string handling)
-            \ For now, just leave a marker
-            -1          \ Push error marker
-        THEN
-    THEN
-;
-
-\ Note: [ and ] would toggle STATE, but require IMMEDIATE flag support
-\ Note: Full QUIT loop requires REFILL and line parsing infrastructure
-\ Note: This INTERPRET-WORD provides core interpretation logic
-
 \ Output helpers
 CONSTANT BL 32              \ BL is the space character (ASCII 32)
 : SPACE ( -- ) BL EMIT ;    \ Output a single space
@@ -116,3 +72,73 @@ CONSTANT BL 32              \ BL is the space character (ASCII 32)
 
     R> R@  C!           \ Store length at counted string address
     R> ;                \ Return counted string address
+
+\ ============================================================================
+\ Interpreter Infrastructure (Issue #9)
+\ ============================================================================
+
+\ STATE variable: Interpreter state management
+\ STATE-VAR is the address of the STATE variable
+\ STATE = 0 means interpreting, STATE = -1 means compiling
+VARIABLE STATE-VAR
+
+\ Convenience word to access STATE value
+: STATE ( -- addr ) STATE-VAR ;
+
+\ INTERPRET-WORD: interpret or compile a single word
+\ Stack effect: ( c-addr u -- )
+\ Behavior depends on STATE:
+\   - If interpreting (STATE=0): Execute the word or push the number
+\   - If compiling (STATE=-1): Compile the word (unless IMMEDIATE) or literal
+: INTERPRET-WORD ( c-addr u -- )
+    2DUP FIND           \ ( c-addr u c-addr u xt flag )
+    IF                  \ Found in dictionary
+        NIP NIP         \ ( xt ) - drop address and length
+        \ TODO: Check IMMEDIATE flag here
+        \ For now, always execute (interpret mode behavior)
+        EXECUTE
+    ELSE                \ Not found, try as number
+        DROP            \ ( c-addr u ) - drop 0 xt from FIND
+        2DUP            \ ( c-addr u c-addr u ) - duplicate for NUMBER
+        NUMBER          \ ( c-addr u n flag )
+        IF              \ Valid number
+            \ Number successfully parsed
+            NIP NIP     \ ( n ) - drop saved c-addr u, keep number
+            \ TODO: In compile mode, should compile as LIT
+            \ For now, just leave on stack (works for interpret mode)
+        ELSE
+            \ Not a word and not a number - error
+            DROP        \ ( c-addr u ) - drop the 0 flag from NUMBER
+            \ Print error message: word_name followed by " ?"
+            TYPE        \ Print the word name
+            ."  ?" CR   \ Print " ?" and newline
+        THEN
+    THEN
+;
+
+\ INTERPRET-LINE: Process one line of input
+\ Parses and interprets all words in the current input buffer
+: INTERPRET-LINE ( -- )
+    BEGIN
+        BL WORD         \ Parse next word delimited by space
+        DUP C@          \ Get length of counted string
+    WHILE               \ While word is not empty
+        COUNT           \ Convert counted string to ( addr len )
+        INTERPRET-WORD  \ Interpret or compile it
+    REPEAT
+    DROP                \ Drop empty word address
+;
+
+\ QUIT: Main interpreter loop
+\ Reads lines, interprets them, and prints "ok" prompts
+: QUIT ( -- )
+    0 STATE-VAR !       \ Start in interpret mode
+    BEGIN
+        REFILL          \ Read new line of input
+    WHILE               \ If got input (REFILL returns true)
+        INTERPRET-LINE  \ Process the line
+        STATE-VAR @ 0= IF    \ If in interpret mode
+            ."  ok" CR       \ Print ok prompt
+        THEN
+    REPEAT
+;

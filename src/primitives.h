@@ -1548,6 +1548,57 @@ inline void emit_compare(llvm::IRBuilder<> &builder,
   store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, result_phi);
 }
 
+// ============================================================================
+// Interpreter state primitives
+// ============================================================================
+
+// Emit LLVM IR for the [ primitive (left-bracket)
+// Stack effect: ( -- )
+// Switches to interpret state by setting STATE to 0
+// This is an IMMEDIATE word
+inline void emit_left_bracket(llvm::IRBuilder<> &builder,
+                               llvm::Value *data_stack_ptr,
+                               llvm::Value *data_space_ptr,
+                               llvm::Value *dsp_ptr) {
+  // Get the address of STATE-VAR (first variable in data space at offset 0)
+  llvm::Value *state_addr = builder.CreatePtrToInt(
+      data_space_ptr, builder.getInt64Ty(), "state_addr"
+  );
+
+  // Convert address back to pointer
+  llvm::Value *state_ptr = builder.CreateIntToPtr(
+      state_addr,
+      llvm::PointerType::get(builder.getContext(), 0),
+      "state_ptr"
+  );
+
+  // Store 0 (interpret mode)
+  builder.CreateStore(builder.getInt64(0), state_ptr);
+}
+
+// Emit LLVM IR for the ] primitive (right-bracket)
+// Stack effect: ( -- )
+// Switches to compile state by setting STATE to -1
+inline void emit_right_bracket(llvm::IRBuilder<> &builder,
+                                llvm::Value *data_stack_ptr,
+                                llvm::Value *data_space_ptr,
+                                llvm::Value *dsp_ptr) {
+  // Get the address of STATE-VAR (first variable in data space at offset 0)
+  llvm::Value *state_addr = builder.CreatePtrToInt(
+      data_space_ptr, builder.getInt64Ty(), "state_addr"
+  );
+
+  // Convert address back to pointer
+  llvm::Value *state_ptr = builder.CreateIntToPtr(
+      state_addr,
+      llvm::PointerType::get(builder.getContext(), 0),
+      "state_ptr"
+  );
+
+  // Store -1 (compile mode)
+  builder.CreateStore(builder.getInt64(-1), state_ptr);
+}
+
 } // namespace anvil
 
 #endif // ANVIL_PRIMITIVES_H

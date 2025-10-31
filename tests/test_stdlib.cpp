@@ -986,3 +986,76 @@ TEST_CASE("Standard Library - Interpreter state and execution", "[stdlib][state]
         REQUIRE(ctx.data_stack[0] == 42);   // Parsed number
     }
 }
+
+// ============================================================================
+// Issue #9: QUIT Interpreter Loop Tests
+// ============================================================================
+
+TEST_CASE("Standard Library - STATE variable", "[stdlib][state]") {
+    SECTION("STATE-VAR creates a variable") {
+        auto ctx = execute_with_stdlib("STATE-VAR @");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Should default to 0 (interpret mode)
+    }
+
+    SECTION("STATE convenience word") {
+        auto ctx = execute_with_stdlib("STATE @");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Should be 0 (interpret mode)
+    }
+}
+
+TEST_CASE("Standard Library - [ and ] primitives", "[stdlib][brackets]") {
+    SECTION("[ sets STATE to 0") {
+        auto ctx = execute_with_stdlib(
+            "-1 STATE-VAR ! "  // Set to compile mode
+            "[ "                // Switch to interpret mode
+            "STATE-VAR @"       // Check STATE
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Should be 0 after [
+    }
+
+    SECTION("] sets STATE to -1") {
+        auto ctx = execute_with_stdlib(
+            "0 STATE-VAR ! "    // Set to interpret mode
+            "] "                 // Switch to compile mode
+            "STATE-VAR @"        // Check STATE
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // Should be -1 after ]
+    }
+
+    SECTION("[ and ] toggle STATE") {
+        auto ctx = execute_with_stdlib(
+            "] STATE-VAR @ "     // Set compile, check
+            "[ STATE-VAR @ "     // Set interpret, check
+            "] STATE-VAR @"      // Set compile again, check
+        );
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == -1);  // First ]
+        REQUIRE(ctx.data_stack[1] == 0);   // [
+        REQUIRE(ctx.data_stack[2] == -1);  // Second ]
+    }
+}
+
+// Note: INTERPRET-LINE is complex to test directly because it uses WORD
+// which requires proper TIB setup. The QUIT components test verifies it exists.
+
+TEST_CASE("Standard Library - QUIT components exist", "[stdlib][quit]") {
+    SECTION("QUIT word is defined") {
+        // Just check that QUIT compiles and exists
+        auto ctx = execute_with_stdlib("' QUIT DROP");
+        REQUIRE(ctx.dsp == 0);  // Just checking it doesn't error
+    }
+
+    SECTION("INTERPRET-WORD is defined") {
+        auto ctx = execute_with_stdlib("' INTERPRET-WORD DROP");
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION("INTERPRET-LINE is defined") {
+        auto ctx = execute_with_stdlib("' INTERPRET-LINE DROP");
+        REQUIRE(ctx.dsp == 0);
+    }
+}

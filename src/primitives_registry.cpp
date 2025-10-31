@@ -234,6 +234,15 @@ void initialize_primitives() {
     global_primitives.register_primitive("NUMBER", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
         emit_number(builder, data_stack, dsp);
     });
+
+    // Interpreter state
+    global_primitives.register_primitive("[", [](auto& builder, auto data_stack, auto, auto data_space, auto dsp, auto, auto, auto, auto, auto) {
+        emit_left_bracket(builder, data_stack, data_space, dsp);
+    });
+
+    global_primitives.register_primitive("]", [](auto& builder, auto data_stack, auto, auto data_space, auto dsp, auto, auto, auto, auto, auto) {
+        emit_right_bracket(builder, data_stack, data_space, dsp);
+    });
 }
 
 } // namespace anvil
