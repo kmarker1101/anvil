@@ -1723,6 +1723,304 @@ TEST_CASE("Standard Library - WITHIN", "[stdlib][within]") {
     }
 }
 
+TEST_CASE("Standard Library - <>", "[stdlib][notequal]") {
+    SECTION("<> with equal values") {
+        auto ctx = execute_with_stdlib("10 10 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 10 = 10, so not-equal is false
+    }
+
+    SECTION("<> with different positive values") {
+        auto ctx = execute_with_stdlib("5 10 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 5 != 10, so not-equal is true
+    }
+
+    SECTION("<> with different values reversed") {
+        auto ctx = execute_with_stdlib("10 5 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 10 != 5, so not-equal is true
+    }
+
+    SECTION("<> with negative equal values") {
+        auto ctx = execute_with_stdlib("-7 -7 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // -7 = -7, so not-equal is false
+    }
+
+    SECTION("<> with different negative values") {
+        auto ctx = execute_with_stdlib("-5 -10 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // -5 != -10, so not-equal is true
+    }
+
+    SECTION("<> with positive and negative") {
+        auto ctx = execute_with_stdlib("5 -5 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 5 != -5, so not-equal is true
+    }
+
+    SECTION("<> with zeros") {
+        auto ctx = execute_with_stdlib("0 0 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 0 = 0, so not-equal is false
+    }
+
+    SECTION("<> with zero and positive") {
+        auto ctx = execute_with_stdlib("0 5 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 0 != 5, so not-equal is true
+    }
+
+    SECTION("<> with zero and negative") {
+        auto ctx = execute_with_stdlib("0 -5 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 0 != -5, so not-equal is true
+    }
+
+    SECTION("<> with one and one") {
+        auto ctx = execute_with_stdlib("1 1 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 1 = 1, so not-equal is false
+    }
+
+    SECTION("<> with large equal values") {
+        auto ctx = execute_with_stdlib("999999 999999 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Equal, so not-equal is false
+    }
+
+    SECTION("<> with large different values") {
+        auto ctx = execute_with_stdlib("999999 1000000 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // Different, so not-equal is true
+    }
+
+    SECTION("<> is inverse of =") {
+        auto ctx = execute_with_stdlib("5 10 <> 5 10 = 0=");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == ctx.data_stack[1]);  // <> should equal = 0=
+    }
+
+    SECTION("<> with equal gives same as = 0=") {
+        auto ctx = execute_with_stdlib("7 7 <> 7 7 = 0=");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == ctx.data_stack[1]);  // Both should be 0
+    }
+
+    SECTION("<> in conditional (true case)") {
+        auto ctx = execute_with_stdlib("5 10 <> IF 42 THEN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);  // Not equal, so IF executes
+    }
+
+    SECTION("<> in conditional (false case)") {
+        auto ctx = execute_with_stdlib("5 5 <> IF 42 THEN");
+        REQUIRE(ctx.dsp == 0);  // Equal, so IF doesn't execute, nothing pushed
+    }
+
+    SECTION("<> with expression results") {
+        auto ctx = execute_with_stdlib("3 4 + 7 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 3+4=7, 7=7, so not-equal is false
+    }
+
+    SECTION("<> with different expression results") {
+        auto ctx = execute_with_stdlib("3 4 + 8 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 3+4=7, 7!=8, so not-equal is true
+    }
+
+    SECTION("<> in JIT mode") {
+        auto ctx = execute_with_stdlib("10 20 <>", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // Not equal
+    }
+
+    SECTION("<> in Interpreter mode") {
+        auto ctx = execute_with_stdlib("10 20 <>", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // Not equal
+    }
+
+    SECTION("<> for validation") {
+        // Common pattern: check if value is not expected
+        auto ctx = execute_with_stdlib("42 42 <> IF 999 ELSE 123 THEN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 123);  // Equal, so ELSE branch
+    }
+
+    SECTION("<> for validation (different)") {
+        auto ctx = execute_with_stdlib("42 99 <> IF 999 ELSE 123 THEN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 999);  // Not equal, so IF branch
+    }
+
+    SECTION("<> chained comparison") {
+        auto ctx = execute_with_stdlib("5 10 <> 20 30 <> AND");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // Both not-equal, so AND is true
+    }
+
+    SECTION("<> with multiple values on stack") {
+        auto ctx = execute_with_stdlib("1 2 3 4 5 <>");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+        REQUIRE(ctx.data_stack[3] == -1);  // 4 != 5
+    }
+
+    SECTION("<> practical use - loop termination check") {
+        // Check if counter has not reached target
+        auto ctx = execute_with_stdlib("10 100 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // Not at target yet
+    }
+
+    SECTION("<> practical use - error value check") {
+        // Check if result is not error code (-1)
+        auto ctx = execute_with_stdlib("42 -1 <>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // Not error, valid result
+    }
+}
+
+TEST_CASE("Standard Library - U>", "[stdlib][ugt]") {
+    SECTION("U> with equal unsigned values") {
+        auto ctx = execute_with_stdlib("10 10 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 10 not > 10
+    }
+
+    SECTION("U> with first greater") {
+        auto ctx = execute_with_stdlib("20 10 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 20 > 10 (unsigned)
+    }
+
+    SECTION("U> with first less") {
+        auto ctx = execute_with_stdlib("5 15 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 5 not > 15
+    }
+
+    SECTION("U> with zero and positive") {
+        auto ctx = execute_with_stdlib("0 5 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 0 not > 5
+    }
+
+    SECTION("U> with positive and zero") {
+        auto ctx = execute_with_stdlib("5 0 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 5 > 0
+    }
+
+    SECTION("U> with both zero") {
+        auto ctx = execute_with_stdlib("0 0 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 0 not > 0
+    }
+
+    SECTION("U> treats negative as large unsigned") {
+        // -1 as unsigned is the largest possible value
+        auto ctx = execute_with_stdlib("-1 100 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // -1 (as unsigned) > 100
+    }
+
+    SECTION("U> with positive and negative") {
+        auto ctx = execute_with_stdlib("100 -1 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 100 not > -1 (as unsigned max)
+    }
+
+    SECTION("U> with both negative") {
+        // More negative = larger unsigned value
+        auto ctx = execute_with_stdlib("-1 -2 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // -1 > -2 (unsigned)
+    }
+
+    SECTION("U> with large positive values") {
+        auto ctx = execute_with_stdlib("1000000 999999 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 1000000 > 999999
+    }
+
+    SECTION("U> is opposite of U< when swapped") {
+        // a U> b should equal b U< a
+        auto ctx = execute_with_stdlib("10 20 U> 20 10 U<");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == ctx.data_stack[1]);  // Same result
+    }
+
+    SECTION("U> is SWAP U<") {
+        auto ctx = execute_with_stdlib("15 25 U> 15 25 SWAP U<");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == ctx.data_stack[1]);  // Verify definition
+    }
+
+    SECTION("U> with 1 and 0") {
+        auto ctx = execute_with_stdlib("1 0 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 1 > 0
+    }
+
+    SECTION("U> with 0 and 1") {
+        auto ctx = execute_with_stdlib("0 1 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 0 not > 1
+    }
+
+    SECTION("U> in JIT mode") {
+        auto ctx = execute_with_stdlib("30 20 U>", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 30 > 20
+    }
+
+    SECTION("U> in Interpreter mode") {
+        auto ctx = execute_with_stdlib("30 20 U>", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 30 > 20
+    }
+
+    SECTION("U> differs from > for negative numbers") {
+        // Signed: -10 < 5 (true), so -10 > 5 is false
+        // Unsigned: -10 is huge, so -10 U> 5 is true
+        auto ctx = execute_with_stdlib("-10 5 U> -10 5 >");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == -1);  // -10 U> 5 is true (unsigned)
+        REQUIRE(ctx.data_stack[1] == 0);   // -10 > 5 is false (signed)
+    }
+
+    SECTION("U> chain comparison") {
+        auto ctx = execute_with_stdlib("30 20 U> 20 10 U> AND");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // Both true: 30>20 and 20>10
+    }
+
+    SECTION("U> boundary at zero") {
+        auto ctx = execute_with_stdlib("1 0 U> 0 1 U>");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == -1);  // 1 > 0
+        REQUIRE(ctx.data_stack[1] == 0);   // 0 not > 1
+    }
+
+    SECTION("U> with consecutive values") {
+        auto ctx = execute_with_stdlib("11 10 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // 11 > 10
+    }
+
+    SECTION("U> with consecutive values reversed") {
+        auto ctx = execute_with_stdlib("10 11 U>");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // 10 not > 11
+    }
+}
+
 TEST_CASE("Standard Library - ROT", "[stdlib][rot]") {
     SECTION("ROT basic operation") {
         auto ctx = execute_with_stdlib("1 2 3 ROT");
@@ -1898,6 +2196,181 @@ TEST_CASE("Standard Library - ROT", "[stdlib][rot]") {
     }
 }
 
+TEST_CASE("Standard Library - -ROT", "[stdlib][nrot]") {
+    SECTION("-ROT basic operation") {
+        auto ctx = execute_with_stdlib("1 2 3 -ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 3);  // Was x3/top, now bottom
+        REQUIRE(ctx.data_stack[1] == 1);  // Was x1/bottom, now middle
+        REQUIRE(ctx.data_stack[2] == 2);  // Was x2/middle, now top
+    }
+
+    SECTION("-ROT with different values") {
+        auto ctx = execute_with_stdlib("10 20 30 -ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 30);
+        REQUIRE(ctx.data_stack[1] == 10);
+        REQUIRE(ctx.data_stack[2] == 20);
+    }
+
+    SECTION("-ROT with negative numbers") {
+        auto ctx = execute_with_stdlib("-5 -10 -15 -ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == -15);
+        REQUIRE(ctx.data_stack[1] == -5);
+        REQUIRE(ctx.data_stack[2] == -10);
+    }
+
+    SECTION("-ROT with mixed positive and negative") {
+        auto ctx = execute_with_stdlib("5 -10 15 -ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 15);
+        REQUIRE(ctx.data_stack[1] == 5);
+        REQUIRE(ctx.data_stack[2] == -10);
+    }
+
+    SECTION("-ROT with zeros") {
+        auto ctx = execute_with_stdlib("0 0 0 -ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 0);
+        REQUIRE(ctx.data_stack[1] == 0);
+        REQUIRE(ctx.data_stack[2] == 0);
+    }
+
+    SECTION("-ROT with one zero") {
+        auto ctx = execute_with_stdlib("1 0 3 -ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 3);
+        REQUIRE(ctx.data_stack[1] == 1);
+        REQUIRE(ctx.data_stack[2] == 0);
+    }
+
+    SECTION("-ROT in JIT mode") {
+        auto ctx = execute_with_stdlib("7 8 9 -ROT", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 9);
+        REQUIRE(ctx.data_stack[1] == 7);
+        REQUIRE(ctx.data_stack[2] == 8);
+    }
+
+    SECTION("-ROT in Interpreter mode") {
+        auto ctx = execute_with_stdlib("4 5 6 -ROT", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 6);
+        REQUIRE(ctx.data_stack[1] == 4);
+        REQUIRE(ctx.data_stack[2] == 5);
+    }
+
+    SECTION("-ROT is inverse of ROT") {
+        // ROT -ROT should return to original order
+        auto ctx = execute_with_stdlib("1 2 3 ROT -ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+    }
+
+    SECTION("-ROT ROT is identity") {
+        // -ROT ROT should return to original order
+        auto ctx = execute_with_stdlib("10 20 30 -ROT ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+        REQUIRE(ctx.data_stack[2] == 30);
+    }
+
+    SECTION("-ROT equals ROT ROT") {
+        auto ctx = execute_with_stdlib("1 2 3 -ROT 10 20 30 ROT ROT");
+        REQUIRE(ctx.dsp == 6);
+        // Both should produce same result
+        REQUIRE(ctx.data_stack[0] == 3);   // From -ROT
+        REQUIRE(ctx.data_stack[1] == 1);
+        REQUIRE(ctx.data_stack[2] == 2);
+        REQUIRE(ctx.data_stack[3] == 30);  // From ROT ROT
+        REQUIRE(ctx.data_stack[4] == 10);
+        REQUIRE(ctx.data_stack[5] == 20);
+    }
+
+    SECTION("-ROT with large numbers") {
+        auto ctx = execute_with_stdlib("100000 200000 300000 -ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 300000);
+        REQUIRE(ctx.data_stack[1] == 100000);
+        REQUIRE(ctx.data_stack[2] == 200000);
+    }
+
+    SECTION("-ROT three times returns to original") {
+        // -ROT -ROT -ROT should return to original order
+        auto ctx = execute_with_stdlib("42 84 126 -ROT -ROT -ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 42);
+        REQUIRE(ctx.data_stack[1] == 84);
+        REQUIRE(ctx.data_stack[2] == 126);
+    }
+
+    SECTION("-ROT for stack reordering in calculations") {
+        // After -ROT: (10 5 2 -- 2 10 5), then 10-5=5, then 2-5=-3
+        auto ctx = execute_with_stdlib("10 5 2 -ROT - -");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -3);
+    }
+
+    SECTION("-ROT with SWAP") {
+        // 1 2 3 -ROT gives (3 1 2), SWAP gives (3 2 1)
+        auto ctx = execute_with_stdlib("1 2 3 -ROT SWAP");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 3);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 1);
+    }
+
+    SECTION("-ROT with DUP") {
+        // 5 10 15 -ROT gives (15 5 10), DUP gives (15 5 10 10)
+        auto ctx = execute_with_stdlib("5 10 15 -ROT DUP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 15);
+        REQUIRE(ctx.data_stack[1] == 5);
+        REQUIRE(ctx.data_stack[2] == 10);
+        REQUIRE(ctx.data_stack[3] == 10);  // Duplicated top
+    }
+
+    SECTION("Multiple -ROT operations") {
+        auto ctx = execute_with_stdlib("1 2 3 -ROT 4 5 6 -ROT");
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == 3);
+        REQUIRE(ctx.data_stack[1] == 1);
+        REQUIRE(ctx.data_stack[2] == 2);
+        REQUIRE(ctx.data_stack[3] == 6);
+        REQUIRE(ctx.data_stack[4] == 4);
+        REQUIRE(ctx.data_stack[5] == 5);
+    }
+
+    SECTION("-ROT alternating with ROT") {
+        auto ctx = execute_with_stdlib("1 2 3 ROT -ROT ROT -ROT");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+    }
+
+    SECTION("-ROT with stack depth > 3") {
+        auto ctx = execute_with_stdlib("1 2 3 4 5 -ROT");
+        REQUIRE(ctx.dsp == 5);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 5);  // Top three rotated
+        REQUIRE(ctx.data_stack[3] == 3);
+        REQUIRE(ctx.data_stack[4] == 4);
+    }
+
+    SECTION("-ROT practical use case") {
+        // 100 10 2 -ROT gives (2 100 10), then 100/10=10, then 2/10=0
+        auto ctx = execute_with_stdlib("100 10 2 -ROT / /");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+}
+
 TEST_CASE("Standard Library - OVER", "[stdlib][over]") {
     SECTION("OVER copies second to top") {
         auto ctx = execute_with_stdlib("10 20 OVER");
@@ -1975,6 +2448,282 @@ TEST_CASE("Standard Library - OVER", "[stdlib][over]") {
         auto ctx = execute_with_stdlib("3 7 OVER + SWAP DROP");
         REQUIRE(ctx.dsp == 1);
         REQUIRE(ctx.data_stack[0] == 10);
+    }
+}
+
+TEST_CASE("Standard Library - 2OVER", "[stdlib][2over]") {
+    SECTION("2OVER basic operation") {
+        auto ctx = execute_with_stdlib("1 2 3 4 2OVER");
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+        REQUIRE(ctx.data_stack[3] == 4);
+        REQUIRE(ctx.data_stack[4] == 1);  // Copy of x1
+        REQUIRE(ctx.data_stack[5] == 2);  // Copy of x2
+    }
+
+    SECTION("2OVER with different values") {
+        auto ctx = execute_with_stdlib("10 20 30 40 2OVER");
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+        REQUIRE(ctx.data_stack[2] == 30);
+        REQUIRE(ctx.data_stack[3] == 40);
+        REQUIRE(ctx.data_stack[4] == 10);
+        REQUIRE(ctx.data_stack[5] == 20);
+    }
+
+    SECTION("2OVER with negative numbers") {
+        auto ctx = execute_with_stdlib("-5 -10 15 20 2OVER");
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == -5);
+        REQUIRE(ctx.data_stack[1] == -10);
+        REQUIRE(ctx.data_stack[2] == 15);
+        REQUIRE(ctx.data_stack[3] == 20);
+        REQUIRE(ctx.data_stack[4] == -5);
+        REQUIRE(ctx.data_stack[5] == -10);
+    }
+
+    SECTION("2OVER with zeros") {
+        auto ctx = execute_with_stdlib("0 0 1 2 2OVER");
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == 0);
+        REQUIRE(ctx.data_stack[1] == 0);
+        REQUIRE(ctx.data_stack[2] == 1);
+        REQUIRE(ctx.data_stack[3] == 2);
+        REQUIRE(ctx.data_stack[4] == 0);
+        REQUIRE(ctx.data_stack[5] == 0);
+    }
+
+    SECTION("2OVER then add pairs") {
+        auto ctx = execute_with_stdlib("1 2 3 4 2OVER + >R + R>");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 1);   // Original 1
+        REQUIRE(ctx.data_stack[1] == 2);   // Original 2
+        REQUIRE(ctx.data_stack[2] == 7);   // 3+4
+        REQUIRE(ctx.data_stack[3] == 3);   // 1+2 (from 2OVER copy)
+    }
+
+    SECTION("2OVER preserves original values") {
+        auto ctx = execute_with_stdlib("5 6 7 8 2OVER 2DROP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 5);
+        REQUIRE(ctx.data_stack[1] == 6);
+        REQUIRE(ctx.data_stack[2] == 7);
+        REQUIRE(ctx.data_stack[3] == 8);
+    }
+
+    SECTION("Multiple 2OVER operations") {
+        // 1 2 3 4 -> after 2OVER: 1 2 3 4 1 2 -> after 2OVER: 1 2 3 4 1 2 3 4
+        auto ctx = execute_with_stdlib("1 2 3 4 2OVER 2OVER");
+        REQUIRE(ctx.dsp == 8);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+        REQUIRE(ctx.data_stack[3] == 4);
+        REQUIRE(ctx.data_stack[4] == 1);
+        REQUIRE(ctx.data_stack[5] == 2);
+        REQUIRE(ctx.data_stack[6] == 3);
+        REQUIRE(ctx.data_stack[7] == 4);
+    }
+
+    SECTION("2OVER with large numbers") {
+        auto ctx = execute_with_stdlib("100000 200000 300000 400000 2OVER");
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == 100000);
+        REQUIRE(ctx.data_stack[1] == 200000);
+        REQUIRE(ctx.data_stack[4] == 100000);
+        REQUIRE(ctx.data_stack[5] == 200000);
+    }
+
+    SECTION("2OVER in JIT mode") {
+        auto ctx = execute_with_stdlib("11 22 33 44 2OVER", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == 11);
+        REQUIRE(ctx.data_stack[1] == 22);
+        REQUIRE(ctx.data_stack[4] == 11);
+        REQUIRE(ctx.data_stack[5] == 22);
+    }
+
+    SECTION("2OVER in Interpreter mode") {
+        auto ctx = execute_with_stdlib("11 22 33 44 2OVER", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == 11);
+        REQUIRE(ctx.data_stack[1] == 22);
+        REQUIRE(ctx.data_stack[4] == 11);
+        REQUIRE(ctx.data_stack[5] == 22);
+    }
+
+    SECTION("2OVER with more than 4 items on stack") {
+        auto ctx = execute_with_stdlib("99 1 2 3 4 2OVER");
+        REQUIRE(ctx.dsp == 7);
+        REQUIRE(ctx.data_stack[0] == 99);
+        REQUIRE(ctx.data_stack[1] == 1);
+        REQUIRE(ctx.data_stack[2] == 2);
+        REQUIRE(ctx.data_stack[3] == 3);
+        REQUIRE(ctx.data_stack[4] == 4);
+        REQUIRE(ctx.data_stack[5] == 1);   // Copy of 3rd from top
+        REQUIRE(ctx.data_stack[6] == 2);   // Copy of 4th from top
+    }
+
+    SECTION("2OVER for comparing pairs") {
+        // Stack: 5 10 5 10 -> 2OVER -> 5 10 5 10 5 10 -> = -> 5 10 5 0 -> >R -> 5 10 5 -> = -> 5 0 -> R> -> 5 0 0 -> AND -> 5 0
+        auto ctx = execute_with_stdlib("5 10 5 10 2OVER = >R = R> AND");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 5);
+        REQUIRE(ctx.data_stack[1] == 10);
+        REQUIRE(ctx.data_stack[2] == 0);  // Pairs not equal
+    }
+
+    SECTION("2OVER practical use case") {
+        // Stack: 2 3 4 5 -> 2 3 4 5 2 3 -> + -> 2 3 4 5 5 -> >R -> 2 3 4 5 -> + -> 2 3 9 -> R> -> 2 3 9 5 -> * -> 2 3 45
+        auto ctx = execute_with_stdlib("2 3 4 5 2OVER + >R + R> *");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 2);
+        REQUIRE(ctx.data_stack[1] == 3);
+        REQUIRE(ctx.data_stack[2] == 45);  // (2+3)*(4+5) = 5*9 = 45
+    }
+}
+
+TEST_CASE("Standard Library - 2SWAP", "[stdlib][2swap]") {
+    SECTION("2SWAP basic operation") {
+        auto ctx = execute_with_stdlib("1 2 3 4 2SWAP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 3);
+        REQUIRE(ctx.data_stack[1] == 4);
+        REQUIRE(ctx.data_stack[2] == 1);
+        REQUIRE(ctx.data_stack[3] == 2);
+    }
+
+    SECTION("2SWAP with different values") {
+        auto ctx = execute_with_stdlib("10 20 30 40 2SWAP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 30);
+        REQUIRE(ctx.data_stack[1] == 40);
+        REQUIRE(ctx.data_stack[2] == 10);
+        REQUIRE(ctx.data_stack[3] == 20);
+    }
+
+    SECTION("2SWAP with negative numbers") {
+        auto ctx = execute_with_stdlib("-5 -10 15 20 2SWAP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 15);
+        REQUIRE(ctx.data_stack[1] == 20);
+        REQUIRE(ctx.data_stack[2] == -5);
+        REQUIRE(ctx.data_stack[3] == -10);
+    }
+
+    SECTION("2SWAP with mixed signs") {
+        auto ctx = execute_with_stdlib("-1 2 -3 4 2SWAP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == -3);
+        REQUIRE(ctx.data_stack[1] == 4);
+        REQUIRE(ctx.data_stack[2] == -1);
+        REQUIRE(ctx.data_stack[3] == 2);
+    }
+
+    SECTION("2SWAP with zeros") {
+        auto ctx = execute_with_stdlib("0 0 1 1 2SWAP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 1);
+        REQUIRE(ctx.data_stack[2] == 0);
+        REQUIRE(ctx.data_stack[3] == 0);
+    }
+
+    SECTION("2SWAP is self-inverse") {
+        auto ctx = execute_with_stdlib("1 2 3 4 2SWAP 2SWAP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+        REQUIRE(ctx.data_stack[3] == 4);
+    }
+
+    SECTION("2SWAP then subtract pairs") {
+        auto ctx = execute_with_stdlib("5 3 10 2 2SWAP - >R - R>");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 8);   // 10-2
+        REQUIRE(ctx.data_stack[1] == 2);   // 5-3
+    }
+
+    SECTION("2SWAP with large numbers") {
+        auto ctx = execute_with_stdlib("100000 200000 300000 400000 2SWAP");
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 300000);
+        REQUIRE(ctx.data_stack[1] == 400000);
+        REQUIRE(ctx.data_stack[2] == 100000);
+        REQUIRE(ctx.data_stack[3] == 200000);
+    }
+
+    SECTION("2SWAP in JIT mode") {
+        auto ctx = execute_with_stdlib("11 22 33 44 2SWAP", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 33);
+        REQUIRE(ctx.data_stack[1] == 44);
+        REQUIRE(ctx.data_stack[2] == 11);
+        REQUIRE(ctx.data_stack[3] == 22);
+    }
+
+    SECTION("2SWAP in Interpreter mode") {
+        auto ctx = execute_with_stdlib("11 22 33 44 2SWAP", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[0] == 33);
+        REQUIRE(ctx.data_stack[1] == 44);
+        REQUIRE(ctx.data_stack[2] == 11);
+        REQUIRE(ctx.data_stack[3] == 22);
+    }
+
+    SECTION("2SWAP with more than 4 items on stack") {
+        auto ctx = execute_with_stdlib("99 1 2 3 4 2SWAP");
+        REQUIRE(ctx.dsp == 5);
+        REQUIRE(ctx.data_stack[0] == 99);
+        REQUIRE(ctx.data_stack[1] == 3);
+        REQUIRE(ctx.data_stack[2] == 4);
+        REQUIRE(ctx.data_stack[3] == 1);
+        REQUIRE(ctx.data_stack[4] == 2);
+    }
+
+    SECTION("Multiple 2SWAP operations") {
+        auto ctx = execute_with_stdlib("1 2 3 4 2SWAP 5 6 2SWAP");
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == 3);
+        REQUIRE(ctx.data_stack[1] == 4);
+        REQUIRE(ctx.data_stack[2] == 5);
+        REQUIRE(ctx.data_stack[3] == 6);
+        REQUIRE(ctx.data_stack[4] == 1);
+        REQUIRE(ctx.data_stack[5] == 2);
+    }
+
+    SECTION("2SWAP for reordering division") {
+        // Want to compute c/d then a/b, but stack is a b c d
+        auto ctx = execute_with_stdlib("20 5 12 3 2SWAP / >R / R>");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 4);   // 12/3
+        REQUIRE(ctx.data_stack[1] == 4);   // 20/5
+    }
+
+    SECTION("2SWAP with 2OVER") {
+        auto ctx = execute_with_stdlib("1 2 3 4 2OVER 2SWAP");
+        REQUIRE(ctx.dsp == 6);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 1);
+        REQUIRE(ctx.data_stack[3] == 2);
+        REQUIRE(ctx.data_stack[4] == 3);
+        REQUIRE(ctx.data_stack[5] == 4);
+    }
+
+    SECTION("2SWAP practical use case") {
+        // Reverse order of two coordinate pairs
+        auto ctx = execute_with_stdlib("10 20 30 40 2SWAP");
+        REQUIRE(ctx.dsp == 4);
+        // (x1,y1) (x2,y2) becomes (x2,y2) (x1,y1)
+        REQUIRE(ctx.data_stack[0] == 30);  // x2
+        REQUIRE(ctx.data_stack[1] == 40);  // y2
+        REQUIRE(ctx.data_stack[2] == 10);  // x1
+        REQUIRE(ctx.data_stack[3] == 20);  // y1
     }
 }
 
