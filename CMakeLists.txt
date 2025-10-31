@@ -109,4 +109,17 @@ add_library(anvil_runtime STATIC src/runtime.c src/terminal.c)
 target_include_directories(anvil_runtime PUBLIC src)
 
 # Copy Forth libraries to build directory
-configure_file(${CMAKE_SOURCE_DIR}/forth/stdlib.fth ${CMAKE_BINARY_DIR}/stdlib.fth COPYONLY)
+# Use custom command so it updates whenever the source file changes
+add_custom_command(
+    OUTPUT ${CMAKE_BINARY_DIR}/stdlib.fth
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${CMAKE_SOURCE_DIR}/forth/stdlib.fth
+        ${CMAKE_BINARY_DIR}/stdlib.fth
+    DEPENDS ${CMAKE_SOURCE_DIR}/forth/stdlib.fth
+    COMMENT "Copying stdlib.fth to build directory"
+)
+
+# Create a custom target that depends on the copied file
+add_custom_target(copy_stdlib ALL
+    DEPENDS ${CMAKE_BINARY_DIR}/stdlib.fth
+)

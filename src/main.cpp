@@ -6,6 +6,7 @@
 #include <cstring>
 #include <vector>
 #include <cstdlib>
+#include <iomanip>
 
 // Platform-specific includes for cross-platform AOT compilation support
 // Supported platforms: macOS, Linux, Windows
@@ -717,9 +718,43 @@ int main(int argc, char** argv) {
         if (line == ".s") {
             print_stack(state.ctx);
             continue;
+        } else if (line == "words") {
+            // Get primitives and dictionary words
+            auto primitives = global_primitives.get_all_names();
+            auto dict_words = global_dictionary.get_all_words();
+
+            // Combine and sort all words
+            std::vector<std::string> all_words;
+            all_words.reserve(primitives.size() + dict_words.size());
+            all_words.insert(all_words.end(), primitives.begin(), primitives.end());
+            all_words.insert(all_words.end(), dict_words.begin(), dict_words.end());
+            std::sort(all_words.begin(), all_words.end());
+
+            std::cout << "Available words (" << all_words.size() << " total: "
+                      << primitives.size() << " primitives, "
+                      << dict_words.size() << " defined):\n";
+
+            // Print in columns for better readability
+            int col = 0;
+            const int max_cols = 6;
+            const int col_width = 15;
+
+            for (const auto& word : all_words) {
+                std::cout << std::left << std::setw(col_width) << word;
+                col++;
+                if (col >= max_cols) {
+                    std::cout << "\n";
+                    col = 0;
+                }
+            }
+            if (col != 0) {
+                std::cout << "\n";
+            }
+            continue;
         } else if (line == "help") {
             std::cout << "REPL commands:\n";
             std::cout << "  .s          Show stack\n";
+            std::cout << "  words       List all defined words\n";
             std::cout << "  quit        Exit\n";
             std::cout << "  help        Show this help\n";
             continue;

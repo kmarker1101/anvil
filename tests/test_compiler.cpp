@@ -5,6 +5,8 @@
 #include "dictionary.h"
 #include "primitives_registry.h"
 #include "execution_engine.h"
+#include <fstream>
+#include <sstream>
 
 using namespace anvil;
 
@@ -27,6 +29,67 @@ ExecutionContext execute_forth(const std::string& source,
     Compiler compiler(context, *module);
     llvm::Function* func = compiler.compile(ast.get());
 
+    REQUIRE(func != nullptr);
+
+    // Verify function
+    std::string error_str;
+    llvm::raw_string_ostream error_stream(error_str);
+    if (llvm::verifyFunction(*func, &error_stream)) {
+        FAIL("Function verification failed: " + error_str);
+    }
+
+    // Create execution engine
+    std::string engine_error;
+    AnvilExecutionEngine* engine = AnvilExecutionEngine::create(
+        std::move(module), mode, &engine_error);
+
+    if (!engine) {
+        FAIL("Failed to create execution engine: " + engine_error);
+    }
+
+    // Execute
+    ExecutionContext ctx;
+    engine->execute(func, &ctx);
+
+    delete engine;
+
+    return ctx;
+}
+
+// Helper to load stdlib, compile and execute Forth code
+ExecutionContext execute_forth_with_stdlib(const std::string& test_code,
+                                            ExecutionMode mode = ExecutionMode::JIT) {
+    initialize_llvm(mode);
+    initialize_primitives();
+
+    // Load stdlib
+    std::ifstream stdlib_file("stdlib.fth");
+    if (!stdlib_file.is_open()) {
+        FAIL("Could not open stdlib.fth - run tests from build directory");
+    }
+
+    std::stringstream buffer;
+    buffer << stdlib_file.rdbuf();
+    std::string stdlib_source = buffer.str();
+    stdlib_file.close();
+
+    // Create LLVM context and module
+    llvm::LLVMContext context;
+    auto module = std::make_unique<llvm::Module>("test", context);
+    Compiler compiler(context, *module);
+
+    // Compile stdlib first
+    ASTBuilder stdlib_builder;
+    auto stdlib_ast = stdlib_builder.parse(stdlib_source);
+    REQUIRE(stdlib_ast != nullptr);
+    compiler.compile(stdlib_ast.get());
+
+    // Now compile and execute test code
+    ASTBuilder test_builder;
+    auto test_ast = test_builder.parse(test_code);
+    REQUIRE(test_ast != nullptr);
+
+    llvm::Function* func = compiler.compile(test_ast.get());
     REQUIRE(func != nullptr);
 
     // Verify function
@@ -437,6 +500,126 @@ TEST_CASE("Compiler compiles CR primitive", "[compiler][cr][io]") {
         // 5 + 3 = 8, CR, 8 * 2 = 16
         REQUIRE(ctx.dsp == 1);
         REQUIRE(ctx.data_stack[0] == 16);
+    }
+}
+
+TEST_CASE("Compiler compiles RECURSE", "[compiler][recurse][recursion]") {
+    // Clear dictionary before each test
+    global_dictionary.clear();
+
+    SECTION("Simple factorial using RECURSE") {
+        // Factorial: : FACT DUP 1 > IF DUP 1- RECURSE * ELSE DROP 1 THEN ;
+        auto ctx = execute_forth_with_stdlib(": FACT DUP 1 > IF DUP 1- RECURSE * ELSE DROP 1 THEN ; 5 FACT");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 120);  // 5! = 120
+    }
+
+    SECTION("Factorial of 0") {
+        auto ctx = execute_forth_with_stdlib(": FACT DUP 1 > IF DUP 1- RECURSE * ELSE DROP 1 THEN ; 0 FACT");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1);  // 0! = 1
+    }
+
+    SECTION("Factorial of 1") {
+        auto ctx = execute_forth_with_stdlib(": FACT DUP 1 > IF DUP 1- RECURSE * ELSE DROP 1 THEN ; 1 FACT");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1);  // 1! = 1
+    }
+
+    SECTION("Factorial of 6") {
+        auto ctx = execute_forth_with_stdlib(": FACT DUP 1 > IF DUP 1- RECURSE * ELSE DROP 1 THEN ; 6 FACT");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 720);  // 6! = 720
+    }
+
+    SECTION("Simple countdown using RECURSE") {
+        // Countdown that sums: : COUNTDOWN DUP 0 > IF DUP 1- RECURSE + ELSE THEN ;
+        auto ctx = execute_forth_with_stdlib(": COUNTDOWN DUP 0 > IF DUP 1- RECURSE + ELSE THEN ; 5 COUNTDOWN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 15);  // 5+4+3+2+1 = 15
+    }
+
+    SECTION("Countdown from 10") {
+        auto ctx = execute_forth_with_stdlib(": COUNTDOWN DUP 0 > IF DUP 1- RECURSE + ELSE THEN ; 10 COUNTDOWN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 55);  // 10+9+8+...+1 = 55
+    }
+
+    SECTION("Countdown from 0 (base case)") {
+        auto ctx = execute_forth_with_stdlib(": COUNTDOWN DUP 0 > IF DUP 1- RECURSE + ELSE THEN ; 0 COUNTDOWN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("Fibonacci using RECURSE") {
+        // Fib: : FIB DUP 2 < IF ELSE DUP 1- RECURSE SWAP 2 - RECURSE + THEN ;
+        // This is inefficient but tests RECURSE correctness
+        // FIB(0)=0, FIB(1)=1, FIB(n)=FIB(n-1)+FIB(n-2)
+        auto ctx = execute_forth_with_stdlib(": FIB DUP 2 < IF ELSE DUP 1- RECURSE SWAP 2 - RECURSE + THEN ; 0 FIB");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // FIB(0) = 0
+    }
+
+    SECTION("Fibonacci of 1") {
+        auto ctx = execute_forth_with_stdlib(": FIB DUP 2 < IF ELSE DUP 1- RECURSE SWAP 2 - RECURSE + THEN ; 1 FIB");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1);  // FIB(1) = 1
+    }
+
+    SECTION("Fibonacci of 5") {
+        auto ctx = execute_forth_with_stdlib(": FIB DUP 2 < IF ELSE DUP 1- RECURSE SWAP 2 - RECURSE + THEN ; 5 FIB");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);  // FIB(5) = 5
+    }
+
+    SECTION("Fibonacci of 7") {
+        auto ctx = execute_forth_with_stdlib(": FIB DUP 2 < IF ELSE DUP 1- RECURSE SWAP 2 - RECURSE + THEN ; 7 FIB");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 13);  // FIB(7) = 13
+    }
+
+    SECTION("RECURSE in JIT mode") {
+        auto ctx = execute_forth_with_stdlib(": FACT DUP 1 > IF DUP 1- RECURSE * ELSE DROP 1 THEN ; 4 FACT", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 24);  // 4! = 24
+    }
+
+    SECTION("RECURSE in Interpreter mode") {
+        auto ctx = execute_forth_with_stdlib(": FACT DUP 1 > IF DUP 1- RECURSE * ELSE DROP 1 THEN ; 4 FACT", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 24);  // 4! = 24
+    }
+
+    SECTION("Multiple recursive words") {
+        // Define two recursive words and use both
+        auto ctx = execute_forth_with_stdlib(
+            ": SUM DUP 0 > IF DUP 1- RECURSE + ELSE THEN ; "
+            ": FACT DUP 1 > IF DUP 1- RECURSE * ELSE DROP 1 THEN ; "
+            "4 SUM 3 FACT"
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 10);  // SUM(4) = 4+3+2+1 = 10
+        REQUIRE(ctx.data_stack[1] == 6);   // FACT(3) = 6
+    }
+
+    SECTION("RECURSE with stack manipulation") {
+        // GCD using Euclidean algorithm: : GCD OVER 0 = IF NIP ELSE DUP ROT ROT /MOD DROP RECURSE THEN ;
+        // GCD(48, 18) = 6
+        auto ctx = execute_forth_with_stdlib(": GCD OVER 0 = IF NIP ELSE DUP ROT ROT /MOD DROP RECURSE THEN ; 48 18 GCD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 6);
+    }
+
+    SECTION("GCD of 100 and 35") {
+        auto ctx = execute_forth_with_stdlib(": GCD OVER 0 = IF NIP ELSE DUP ROT ROT /MOD DROP RECURSE THEN ; 100 35 GCD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);  // GCD(100, 35) = 5
+    }
+
+    SECTION("GCD of equal numbers") {
+        auto ctx = execute_forth_with_stdlib(": GCD OVER 0 = IF NIP ELSE DUP ROT ROT /MOD DROP RECURSE THEN ; 42 42 GCD");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);  // GCD(42, 42) = 42
     }
 }
 

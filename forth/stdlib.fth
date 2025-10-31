@@ -3,10 +3,12 @@
 : 2DROP DROP DROP ;
 : 2DUP OVER OVER ;
 : 0= 0 = ;
+: > ( n1 n2 -- flag ) SWAP < ;  \ n1 > n2 is equivalent to n2 < n1
 : NEGATE -1 * ;
 : ABS ( n -- +n ) DUP 0 < IF NEGATE THEN ;
 : OVER ( x1 x2 -- x1 x2 x1 ) >R DUP R> SWAP ;
 : / ( n1 n2 -- n3 ) /MOD NIP ;  \ Divide, keep quotient, drop remainder
+: 1- 1 - ;
 
 \ Memory allocation helpers
 \ These are helpers for working with variables and constants

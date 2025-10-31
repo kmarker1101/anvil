@@ -1,7 +1,9 @@
 #include <catch2/catch_test_macros.hpp>
 #include "test_helpers.h"
 #include "primitives.h"
+#include "primitives_registry.h"
 #include "execution_context_layout.h"
+#include <set>
 
 using namespace anvil;
 using namespace anvil::test;
@@ -1876,3 +1878,60 @@ TEST_BOTH_MODES("J primitive returns outer loop counter", "[primitives][loops][j
 // because they produce output to stdout. They are tested indirectly
 // through integration tests and manual testing.
 // EMIT is similarly tested in test_emit.cpp with output capture.
+
+TEST_CASE("PrimitivesRegistry get_all_names", "[primitives][registry]") {
+    // Initialize the primitives registry
+    initialize_primitives();
+
+    // Get all primitive names from the global registry
+    auto names = global_primitives.get_all_names();
+
+    SECTION("Returns non-empty list") {
+        REQUIRE(names.size() > 0);
+        REQUIRE(names.size() == global_primitives.size());
+    }
+
+    SECTION("Names are sorted alphabetically") {
+        for (size_t i = 1; i < names.size(); i++) {
+            REQUIRE(names[i-1] <= names[i]);
+        }
+    }
+
+    SECTION("Contains expected primitive names") {
+        // Check for some core primitives
+        bool has_dup = false;
+        bool has_swap = false;
+        bool has_drop = false;
+        bool has_plus = false;
+        bool has_minus = false;
+
+        for (const auto& name : names) {
+            if (name == "DUP") has_dup = true;
+            if (name == "SWAP") has_swap = true;
+            if (name == "DROP") has_drop = true;
+            if (name == "+") has_plus = true;
+            if (name == "-") has_minus = true;
+        }
+
+        REQUIRE(has_dup);
+        REQUIRE(has_swap);
+        REQUIRE(has_drop);
+        REQUIRE(has_plus);
+        REQUIRE(has_minus);
+    }
+
+    SECTION("All names are uppercase") {
+        for (const auto& name : names) {
+            for (char c : name) {
+                if (std::isalpha(c)) {
+                    REQUIRE(std::isupper(c));
+                }
+            }
+        }
+    }
+
+    SECTION("No duplicate names") {
+        std::set<std::string> unique_names(names.begin(), names.end());
+        REQUIRE(unique_names.size() == names.size());
+    }
+}

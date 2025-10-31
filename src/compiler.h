@@ -161,7 +161,7 @@ private:
 
     // Compile a word call
     void compile_word_call(WordCallNode* node) {
-        // Check for LEAVE (special loop control word)
+        // Check for special compile-time words
         std::string upper_name = node->word_name;
         std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
                       [](unsigned char c) { return std::toupper(c); });
@@ -177,6 +177,16 @@ private:
                 builder_.SetInsertPoint(after_leave);
             }
             // If not in a loop, ignore LEAVE (should be an error in real implementation)
+            return;
+        }
+
+        if (upper_name == "RECURSE") {
+            // RECURSE calls the word currently being defined
+            if (!current_function_) {
+                throw std::runtime_error("RECURSE used outside of definition");
+            }
+            llvm::Value* ctx_ptr = current_function_->getArg(0);
+            builder_.CreateCall(current_function_, {ctx_ptr});
             return;
         }
 

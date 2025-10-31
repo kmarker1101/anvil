@@ -356,6 +356,91 @@ TEST_CASE("Standard Library - / (division)", "[stdlib][divide]") {
     }
 }
 
+TEST_CASE("Standard Library - 1- (decrement)", "[stdlib][1-]") {
+    SECTION("Decrement positive number") {
+        auto ctx = execute_with_stdlib("5 1-");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 4);
+    }
+
+    SECTION("Decrement to zero") {
+        auto ctx = execute_with_stdlib("1 1-");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("Decrement zero to negative") {
+        auto ctx = execute_with_stdlib("0 1-");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);
+    }
+
+    SECTION("Decrement negative number") {
+        auto ctx = execute_with_stdlib("-5 1-");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -6);
+    }
+
+    SECTION("Decrement large number") {
+        auto ctx = execute_with_stdlib("1000 1-");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 999);
+    }
+
+    SECTION("Multiple decrements") {
+        auto ctx = execute_with_stdlib("10 1- 1- 1-");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 7);  // 10-1-1-1 = 7
+    }
+
+    SECTION("Decrement in expression") {
+        auto ctx = execute_with_stdlib("20 1- 5 +");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 24);  // (20-1)+5 = 19+5 = 24
+    }
+
+    SECTION("Decrement with DUP") {
+        auto ctx = execute_with_stdlib("8 DUP 1-");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 8);
+        REQUIRE(ctx.data_stack[1] == 7);  // Original 8, then 8-1=7
+    }
+
+    SECTION("Decrement in JIT mode") {
+        auto ctx = execute_with_stdlib("42 1-", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 41);
+    }
+
+    SECTION("Decrement in Interpreter mode") {
+        auto ctx = execute_with_stdlib("42 1-", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 41);
+    }
+
+    SECTION("Decrement used in loop-like pattern") {
+        // Simulating countdown: 3 2 1
+        auto ctx = execute_with_stdlib("3 DUP 1- DUP 1-");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 3);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 1);
+    }
+
+    SECTION("Decrement with subtraction") {
+        auto ctx = execute_with_stdlib("10 1- 5 -");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 4);  // (10-1)-5 = 9-5 = 4
+    }
+
+    SECTION("Verify 1- is equivalent to 1 -") {
+        auto ctx = execute_with_stdlib("15 1- 15 1 -");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 14);  // 15 1-
+        REQUIRE(ctx.data_stack[1] == 14);  // 15 1 -
+    }
+}
+
 TEST_CASE("Standard Library - OVER", "[stdlib][over]") {
     SECTION("OVER copies second to top") {
         auto ctx = execute_with_stdlib("10 20 OVER");

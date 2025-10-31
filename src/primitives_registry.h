@@ -74,6 +74,17 @@ public:
     void clear() {
         primitives_.clear();
     }
+
+    // Get all primitive names (sorted)
+    std::vector<std::string> get_all_names() const {
+        std::vector<std::string> names;
+        names.reserve(primitives_.size());
+        for (const auto& pair : primitives_) {
+            names.push_back(pair.first);  // Already uppercase from registration
+        }
+        std::sort(names.begin(), names.end());
+        return names;
+    }
 };
 
 // Global primitives registry
