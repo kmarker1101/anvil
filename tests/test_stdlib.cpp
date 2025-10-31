@@ -38,6 +38,21 @@ ExecutionContext execute_with_stdlib(const std::string& test_code,
     REQUIRE(stdlib_ast != nullptr);
     compiler.compile(stdlib_ast.get());
 
+    // Also load repl.fth for REPL/interpreter tests
+    std::ifstream repl_file("repl.fth");
+    if (repl_file.is_open()) {
+        std::stringstream repl_buffer;
+        repl_buffer << repl_file.rdbuf();
+        std::string repl_source = repl_buffer.str();
+        repl_file.close();
+
+        ASTBuilder repl_builder;
+        auto repl_ast = repl_builder.parse(repl_source);
+        if (repl_ast) {
+            compiler.compile(repl_ast.get());
+        }
+    }
+
     // Now compile and execute test code
     ASTBuilder test_builder;
     auto test_ast = test_builder.parse(test_code);

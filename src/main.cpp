@@ -639,7 +639,8 @@ int main(int argc, char** argv) {
 
     // Load standard library
     std::string exe_dir = get_executable_dir();
-    std::string stdlib_path = exe_dir + get_path_sep() + "stdlib.fth";
+    std::string path_sep = get_path_sep();
+    std::string stdlib_path = exe_dir + path_sep + "stdlib.fth";
     std::ifstream stdlib_file(stdlib_path);
     if (stdlib_file.is_open()) {
         std::stringstream buffer;
@@ -650,6 +651,19 @@ int main(int argc, char** argv) {
         execute_line(stdlib_source, state);
     }
     // If stdlib doesn't exist, continue without it
+
+    // Load REPL infrastructure (only for interactive mode)
+    std::string repl_path = exe_dir + path_sep + "repl.fth";
+    std::ifstream repl_file(repl_path);
+    if (repl_file.is_open()) {
+        std::stringstream buffer;
+        buffer << repl_file.rdbuf();
+        std::string repl_source = buffer.str();
+        repl_file.close();
+
+        execute_line(repl_source, state);
+    }
+    // If repl.fth doesn't exist, continue without it
 
     // REPL loop
 #ifdef HAVE_READLINE

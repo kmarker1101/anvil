@@ -108,5 +108,6 @@ catch_discover_tests(anvil_tests)
 add_library(anvil_runtime STATIC src/runtime.c src/terminal.c)
 target_include_directories(anvil_runtime PUBLIC src)
 
-# Copy standard library to build directory
+# Copy Forth libraries to build directory
 configure_file(${CMAKE_SOURCE_DIR}/forth/stdlib.fth ${CMAKE_BINARY_DIR}/stdlib.fth COPYONLY)
+configure_file(${CMAKE_SOURCE_DIR}/forth/repl.fth ${CMAKE_BINARY_DIR}/repl.fth COPYONLY)
