@@ -997,6 +997,130 @@ inline void emit_comma(llvm::IRBuilder<> &builder,
   builder.CreateStore(new_here, here_ptr);
 }
 
+// ============================================================================
+// Terminal I/O primitives
+// ============================================================================
+
+// Emit LLVM IR for the KEY primitive
+// Stack effect: ( -- char )
+// Reads a single character from stdin (blocking)
+inline void emit_key(llvm::IRBuilder<> &builder,
+                     llvm::Value *data_stack_ptr,
+                     llvm::Value *dsp_ptr) {
+  llvm::Module *module = builder.GetInsertBlock()->getModule();
+
+  // Get getchar function
+  llvm::FunctionType *getchar_type = llvm::FunctionType::get(
+      builder.getInt32Ty(),
+      {},
+      false);
+  llvm::FunctionCallee getchar_func = module->getOrInsertFunction("getchar", getchar_type);
+
+  // Call getchar to read character
+  llvm::Value *char_val = builder.CreateCall(getchar_func);
+
+  // Convert to 64-bit for stack
+  llvm::Value *char_val_i64 = builder.CreateSExt(char_val, builder.getInt64Ty(), "char_i64");
+
+  // Push onto data stack
+  llvm::Value *dsp = builder.CreateLoad(builder.getInt64Ty(), dsp_ptr, "dsp");
+  llvm::Value *stack_top = builder.CreateGEP(builder.getInt64Ty(), data_stack_ptr, dsp, "stack_top");
+  builder.CreateStore(char_val_i64, stack_top);
+  llvm::Value *new_dsp = builder.CreateAdd(dsp, builder.getInt64(1), "new_dsp");
+  builder.CreateStore(new_dsp, dsp_ptr);
+}
+
+// Emit LLVM IR for the KEY? primitive
+// Stack effect: ( -- flag )
+// Returns true if a character is available to read
+inline void emit_key_question(llvm::IRBuilder<> &builder,
+                               llvm::Value *data_stack_ptr,
+                               llvm::Value *dsp_ptr) {
+  llvm::Module *module = builder.GetInsertBlock()->getModule();
+
+  // Declare anvil_key_available() from runtime
+  llvm::FunctionType *key_available_type = llvm::FunctionType::get(
+      builder.getInt32Ty(),
+      {},
+      false);
+  llvm::FunctionCallee key_available_func =
+      module->getOrInsertFunction("anvil_key_available", key_available_type);
+
+  // Call anvil_key_available
+  llvm::Value *available = builder.CreateCall(key_available_func);
+
+  // Convert to boolean: 0 = false, -1 = true (Forth convention)
+  llvm::Value *is_zero = builder.CreateICmpEQ(available, builder.getInt32(0), "is_zero");
+  llvm::Value *flag = builder.CreateSelect(
+      is_zero,
+      builder.getInt64(0),   // False
+      builder.getInt64(-1),  // True
+      "flag");
+
+  // Push onto data stack
+  llvm::Value *dsp = builder.CreateLoad(builder.getInt64Ty(), dsp_ptr, "dsp");
+  llvm::Value *stack_top = builder.CreateGEP(builder.getInt64Ty(), data_stack_ptr, dsp, "stack_top");
+  builder.CreateStore(flag, stack_top);
+  llvm::Value *new_dsp = builder.CreateAdd(dsp, builder.getInt64(1), "new_dsp");
+  builder.CreateStore(new_dsp, dsp_ptr);
+}
+
+// Emit LLVM IR for the RAW-MODE primitive
+// Stack effect: ( -- )
+// Switches terminal to raw mode (no echo, no buffering)
+inline void emit_raw_mode(llvm::IRBuilder<> &builder) {
+  llvm::Module *module = builder.GetInsertBlock()->getModule();
+
+  // Declare anvil_set_raw_mode() from runtime
+  llvm::FunctionType *raw_mode_type = llvm::FunctionType::get(
+      builder.getVoidTy(),
+      {},
+      false);
+  llvm::FunctionCallee raw_mode_func =
+      module->getOrInsertFunction("anvil_set_raw_mode", raw_mode_type);
+
+  // Call anvil_set_raw_mode
+  builder.CreateCall(raw_mode_func);
+}
+
+// Emit LLVM IR for the COOKED-MODE primitive
+// Stack effect: ( -- )
+// Restores normal terminal mode
+inline void emit_cooked_mode(llvm::IRBuilder<> &builder) {
+  llvm::Module *module = builder.GetInsertBlock()->getModule();
+
+  // Declare anvil_set_cooked_mode() from runtime
+  llvm::FunctionType *cooked_mode_type = llvm::FunctionType::get(
+      builder.getVoidTy(),
+      {},
+      false);
+  llvm::FunctionCallee cooked_mode_func =
+      module->getOrInsertFunction("anvil_set_cooked_mode", cooked_mode_type);
+
+  // Call anvil_set_cooked_mode
+  builder.CreateCall(cooked_mode_func);
+}
+
+// Emit LLVM IR for the EMIT-ESC primitive
+// Stack effect: ( -- )
+// Outputs ESC character (ASCII 27) for building ANSI escape sequences
+inline void emit_emit_esc(llvm::IRBuilder<> &builder,
+                          llvm::Value *data_stack_ptr,
+                          llvm::Value *dsp_ptr) {
+  // Simply push 27 (ESC) and call EMIT
+  // This is equivalent to: 27 EMIT
+
+  // Push 27 onto stack
+  llvm::Value *dsp = builder.CreateLoad(builder.getInt64Ty(), dsp_ptr, "dsp");
+  llvm::Value *stack_top = builder.CreateGEP(builder.getInt64Ty(), data_stack_ptr, dsp, "stack_top");
+  builder.CreateStore(builder.getInt64(27), stack_top);
+  llvm::Value *new_dsp = builder.CreateAdd(dsp, builder.getInt64(1), "new_dsp");
+  builder.CreateStore(new_dsp, dsp_ptr);
+
+  // Call emit_emit to output it
+  emit_emit(builder, data_stack_ptr, dsp_ptr);
+}
+
 } // namespace anvil
 
 #endif // ANVIL_PRIMITIVES_H
