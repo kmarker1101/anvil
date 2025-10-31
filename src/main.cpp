@@ -284,7 +284,23 @@ bool execute_line(const std::string& line, ReplState& state) {
         }
 
     } catch (const std::exception& e) {
+        // Don't use cursor positioning on error - just print error normally
+        std::cout << "\n";  // Move to new line first
         std::cerr << "Error: " << e.what() << "\n";
+        // Reset stacks to recover from error
+        state.ctx.dsp = 0;
+        state.ctx.rsp = 0;
+
+        // Clean up any partially-created __main functions from the module
+        std::vector<llvm::Function*> to_remove;
+        for (auto& func : state.module->functions()) {
+            if (func.getName().contains("__main")) {
+                to_remove.push_back(&func);
+            }
+        }
+        for (auto* func : to_remove) {
+            func->eraseFromParent();
+        }
     }
 
     return true;
@@ -637,12 +653,12 @@ int main(int argc, char** argv) {
     // Print banner
     std::cout << "Anvil Forth Compiler (LLVM " << LLVM_VERSION_STRING << ")\n";
     std::cout << "Mode: " << (mode == ExecutionMode::JIT ? "JIT" : "Interpreter") << "\n";
-    std::cout << "Type help for help, quit to exit\n\n";
+    std::cout << "Type help for help, quit to exit\n";
 
     // Create REPL state
     ReplState state(mode);
 
-    // Load standard library
+    // Load standard library silently (suppress "ok" output)
     std::string exe_dir = get_executable_dir();
     std::string path_sep = get_path_sep();
     std::string stdlib_path = exe_dir + path_sep + "stdlib.fth";
@@ -653,28 +669,19 @@ int main(int argc, char** argv) {
         std::string stdlib_source = buffer.str();
         stdlib_file.close();
 
+        // Redirect stdout to suppress "ok" messages during stdlib load
+        std::streambuf* old_cout = std::cout.rdbuf();
+        std::ostringstream null_stream;
+        std::cout.rdbuf(null_stream.rdbuf());
+
         execute_line(stdlib_source, state);
+
+        // Restore stdout
+        std::cout.rdbuf(old_cout);
     }
     // If stdlib doesn't exist, continue without it
 
-    // Load REPL infrastructure (only for interactive mode)
-    std::string repl_path = exe_dir + path_sep + "repl.fth";
-    std::ifstream repl_file(repl_path);
-    bool repl_loaded = false;
-    if (repl_file.is_open()) {
-        std::stringstream buffer;
-        buffer << repl_file.rdbuf();
-        std::string repl_source = buffer.str();
-        repl_file.close();
-
-        bool repl_execute_ok = execute_line(repl_source, state);
-        repl_loaded = repl_execute_ok;
-    }
-    // If repl.fth doesn't exist, fall back to C++ REPL
-
-    // C++ REPL loop (repl.fth provides helper words but C++ manages the loop)
-#ifdef HAVE_READLINE
-    // Use readline with history
+    // REPL loop
     using_history();
 
     while (true) {
@@ -687,79 +694,42 @@ int main(int argc, char** argv) {
         }
 
         std::string line(input);
+        free(input);
 
-        // Add non-empty lines to history
-        if (!line.empty()) {
-            add_history(input);
+        // Handle exit commands immediately (no echo, no history)
+        if (line == "quit" || line == "exit" || line == "bye") {
+            break;
         }
 
-        // Echo the input line so it stays visible
-        std::cout << line;
+        // Add non-empty lines to history (but not exit commands)
+        if (!line.empty()) {
+            add_history(line.c_str());
+        }
+
+        // Handle special REPL commands
+        if (line == ".s") {
+            std::cout << line << "\n";
+            print_stack(state.ctx);
+            continue;
+        } else if (line == "help") {
+            std::cout << line << "\n";
+            std::cout << "REPL commands:\n";
+            std::cout << "  .s          Show stack\n";
+            std::cout << "  quit        Exit\n";
+            std::cout << "  help        Show this help\n";
+            continue;
+        }
+
+        // Echo input with cursor positioning for normal commands
+        std::cout << "\033[1A\033[2K" << line;  // Move up, clear line, print input
         if (!line.empty()) {
             std::cout << " ";  // Space before output
         }
 
-        free(input);
-
-        // Handle special REPL commands
-        if (line == "quit" || line == "exit" || line == "bye") {
-            std::cout << "\n";
-            break;
-        } else if (line == ".s") {
-            std::cout << "\n";
-            print_stack(state.ctx);
-            continue;
-        } else if (line == "help") {
-            std::cout << "\n";
-            std::cout << "REPL commands:\n";
-            std::cout << "  .s          Show stack\n";
-            std::cout << "  quit        Exit\n";
-            std::cout << "  help        Show this help\n";
-            continue;
-        }
-
         if (!execute_line(line, state)) {
             break;
         }
     }
-#else
-    // Fallback to basic input without readline
-    std::string line;
-    while (true) {
-        if (!std::getline(std::cin, line)) {
-            std::cout << "\n";
-            break; // EOF
-        }
 
-        // Echo input for GForth-style output
-        std::cout << line;
-        if (!line.empty()) {
-            std::cout << " ";
-        }
-
-        // Handle special REPL commands
-        if (line == "quit" || line == "exit" || line == "bye") {
-            std::cout << "\n";
-            break;
-        } else if (line == ".s") {
-            std::cout << "\n";
-            print_stack(state.ctx);
-            continue;
-        } else if (line == "help") {
-            std::cout << "\n";
-            std::cout << "REPL commands:\n";
-            std::cout << "  .s          Show stack\n";
-            std::cout << "  quit        Exit\n";
-            std::cout << "  help        Show this help\n";
-            continue;
-        }
-
-        if (!execute_line(line, state)) {
-            break;
-        }
-    }
-#endif
-
-    std::cout << "Goodbye!\n";
     return 0;
 }

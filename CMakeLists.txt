@@ -110,4 +110,3 @@ target_include_directories(anvil_runtime PUBLIC src)
 
 # Copy Forth libraries to build directory
 configure_file(${CMAKE_SOURCE_DIR}/forth/stdlib.fth ${CMAKE_BINARY_DIR}/stdlib.fth COPYONLY)
-configure_file(${CMAKE_SOURCE_DIR}/forth/repl.fth ${CMAKE_BINARY_DIR}/repl.fth COPYONLY)
