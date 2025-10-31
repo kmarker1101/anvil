@@ -274,8 +274,8 @@ bool execute_line(const std::string& line, ReplState& state) {
 
             delete engine;
 
-            // Print "ok" after execution (no leading space - already printed by caller)
-            std::cout << "ok\n";
+            // Print " ok" after execution (space ensures separation from any output)
+            std::cout << " ok\n";
         }
 
     } catch (const std::exception& e) {
