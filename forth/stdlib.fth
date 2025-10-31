@@ -22,3 +22,32 @@ CONSTANT BL 32              \ BL is the space character (ASCII 32)
     BEGIN DUP WHILE
         SPACE 1 -
     REPEAT DROP ;
+
+\ String helpers
+: COUNT ( c-addr -- c-addr+1 u )
+    DUP 1 + SWAP C@ ;    \ Get address+1 and length byte
+
+\ Input buffer helpers
+: REFILL ( -- flag )
+    TIB 1024 ACCEPT     \ Read line into TIB (up to 1024 chars)
+    #TIB !              \ Store length in #TIB
+    0 >IN !             \ Reset parse position to start
+    -1 ;                \ Return true (successfully refilled)
+
+\ WORD - parse word and return counted string
+\ Uses data space at HERE as temporary buffer
+: WORD ( char -- c-addr )
+    PARSE               \ Parse until delimiter ( char -- c-addr u )
+    HERE DUP >R         \ Save HERE address ( c-addr u here -- ) ( R: here )
+    OVER >R             \ Save length ( c-addr u here -- ) ( R: here len )
+    1 + SWAP            \ Point past length byte for copying ( c-addr here+1 u )
+
+    \ Copy loop: ( src-addr dst-addr count -- )
+    0 DO                \ For each character
+        OVER I + C@     \ Get source char at offset I
+        OVER I + C!     \ Store to dest at offset I
+    LOOP
+    2DROP               \ Drop addresses
+
+    R> R@  C!           \ Store length at counted string address
+    R> ;                \ Return counted string address

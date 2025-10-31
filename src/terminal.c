@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <sys/select.h>
 #include <stdio.h>
+#include <stddef.h>  // For size_t
 
 // Terminal state management
 static struct termios original_termios;
@@ -56,4 +57,42 @@ int anvil_key_available(void) {
     // Check if stdin has data
     int result = select(STDIN_FILENO + 1, &readfds, NULL, NULL, &timeout);
     return (result > 0) ? 1 : 0;
+}
+
+// Read a line of input with basic line editing (backspace support)
+// Returns number of characters read (not including newline)
+size_t anvil_accept(char* buf, size_t maxlen) {
+    size_t pos = 0;
+
+    while (pos < maxlen) {
+        int ch = getchar();
+
+        if (ch == EOF) {
+            break;
+        }
+
+        // Handle newline - end of input
+        if (ch == '\n' || ch == '\r') {
+            break;
+        }
+
+        // Handle backspace/delete
+        if (ch == 8 || ch == 127) {
+            if (pos > 0) {
+                pos--;
+                // Echo backspace sequence: backspace, space, backspace
+                // This erases the character on screen
+                printf("\b \b");
+                fflush(stdout);
+            }
+            continue;
+        }
+
+        // Regular character - store and echo
+        buf[pos++] = (char)ch;
+        putchar(ch);
+        fflush(stdout);
+    }
+
+    return pos;
 }

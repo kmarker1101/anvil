@@ -1121,6 +1121,191 @@ inline void emit_emit_esc(llvm::IRBuilder<> &builder,
   emit_emit(builder, data_stack_ptr, dsp_ptr);
 }
 
+// ============================================================================
+// Input Buffer Management Primitives
+// ============================================================================
+
+// Emit LLVM IR for the TIB primitive
+// Stack effect: ( -- addr )
+// Returns address of Terminal Input Buffer
+inline void emit_tib(llvm::IRBuilder<> &builder,
+                     llvm::Value *data_stack_ptr,
+                     llvm::Value *dsp_ptr,
+                     llvm::Value *tib_ptr) {
+  // Convert TIB pointer to integer address
+  llvm::Value *addr = builder.CreatePtrToInt(tib_ptr, builder.getInt64Ty(), "tib_addr");
+
+  // Push address to data stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, addr);
+}
+
+// Emit LLVM IR for the >IN primitive
+// Stack effect: ( -- addr )
+// Returns address of parse position variable
+inline void emit_to_in(llvm::IRBuilder<> &builder,
+                       llvm::Value *data_stack_ptr,
+                       llvm::Value *dsp_ptr,
+                       llvm::Value *to_in_ptr) {
+  // Convert >IN pointer to integer address
+  llvm::Value *addr = builder.CreatePtrToInt(to_in_ptr, builder.getInt64Ty(), "to_in_addr");
+
+  // Push address to data stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, addr);
+}
+
+// Emit LLVM IR for the #TIB primitive
+// Stack effect: ( -- addr )
+// Returns address of buffer length variable
+inline void emit_num_tib(llvm::IRBuilder<> &builder,
+                         llvm::Value *data_stack_ptr,
+                         llvm::Value *dsp_ptr,
+                         llvm::Value *num_tib_ptr) {
+  // Convert #TIB pointer to integer address
+  llvm::Value *addr = builder.CreatePtrToInt(num_tib_ptr, builder.getInt64Ty(), "num_tib_addr");
+
+  // Push address to data stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, addr);
+}
+
+// Emit LLVM IR for the SOURCE primitive
+// Stack effect: ( -- c-addr u )
+// Returns address and length of current input buffer
+inline void emit_source(llvm::IRBuilder<> &builder,
+                        llvm::Value *data_stack_ptr,
+                        llvm::Value *dsp_ptr,
+                        llvm::Value *tib_ptr,
+                        llvm::Value *num_tib_ptr) {
+  // Get TIB address
+  llvm::Value *tib_addr = builder.CreatePtrToInt(tib_ptr, builder.getInt64Ty(), "tib_addr");
+
+  // Load #TIB value
+  llvm::Value *num_tib = builder.CreateLoad(builder.getInt64Ty(), num_tib_ptr, "num_tib");
+
+  // Push both to stack (address first, then length)
+  adjust_dsp(builder, dsp_ptr, 2);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1, tib_addr);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, num_tib);
+}
+
+// Emit LLVM IR for the ACCEPT primitive
+// Stack effect: ( c-addr +n1 -- +n2 )
+// Read a line of input into buffer, return actual count
+inline void emit_accept(llvm::IRBuilder<> &builder,
+                        llvm::Value *data_stack_ptr,
+                        llvm::Value *dsp_ptr) {
+  llvm::Module *module = builder.GetInsertBlock()->getModule();
+
+  // Declare anvil_accept(char* buf, size_t maxlen) -> size_t
+  llvm::Type *i8_ptr_type = llvm::PointerType::get(builder.getContext(), 0);
+  llvm::FunctionType *accept_type = llvm::FunctionType::get(
+      builder.getInt64Ty(),
+      {i8_ptr_type, builder.getInt64Ty()},
+      false);
+  llvm::FunctionCallee accept_func = module->getOrInsertFunction("anvil_accept", accept_type);
+
+  // Pop max length and address from stack
+  llvm::Value *maxlen = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  llvm::Value *addr_int = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1);
+
+  // Convert address to pointer
+  llvm::Value *buf_ptr = builder.CreateIntToPtr(addr_int, i8_ptr_type, "buf_ptr");
+
+  // Call anvil_accept
+  llvm::Value *actual_len = builder.CreateCall(accept_func, {buf_ptr, maxlen});
+
+  // Pop one value (consumed 2, returning 1)
+  adjust_dsp(builder, dsp_ptr, -1);
+
+  // Store actual length at top of stack
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, actual_len);
+}
+
+// Emit LLVM IR for the PARSE primitive
+// Stack effect: ( char "ccc<char>" -- c-addr u )
+// Parse string from input buffer until delimiter or end
+inline void emit_parse(llvm::IRBuilder<> &builder,
+                       llvm::Value *data_stack_ptr,
+                       llvm::Value *dsp_ptr,
+                       llvm::Value *tib_ptr,
+                       llvm::Value *to_in_ptr,
+                       llvm::Value *num_tib_ptr) {
+  // Pop delimiter character
+  llvm::Value *delim = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+
+  // Load >IN and #TIB
+  llvm::Value *to_in = builder.CreateLoad(builder.getInt64Ty(), to_in_ptr, "to_in");
+  llvm::Value *num_tib = builder.CreateLoad(builder.getInt64Ty(), num_tib_ptr, "num_tib");
+
+  // Get TIB base address as integer
+  llvm::Value *tib_addr = builder.CreatePtrToInt(tib_ptr, builder.getInt64Ty(), "tib_addr");
+
+  // Calculate start address: TIB + >IN
+  llvm::Value *start_addr = builder.CreateAdd(tib_addr, to_in, "start_addr");
+
+  // Create loop to find delimiter or end
+  llvm::BasicBlock *loop_test = llvm::BasicBlock::Create(
+      builder.getContext(), "parse_loop_test", builder.GetInsertBlock()->getParent());
+  llvm::BasicBlock *loop_body = llvm::BasicBlock::Create(
+      builder.getContext(), "parse_loop_body", builder.GetInsertBlock()->getParent());
+  llvm::BasicBlock *loop_exit = llvm::BasicBlock::Create(
+      builder.getContext(), "parse_loop_exit", builder.GetInsertBlock()->getParent());
+
+  // Initialize position counter (starts at >IN)
+  llvm::Type *i8_ptr_type = llvm::PointerType::get(builder.getContext(), 0);
+  llvm::Value *tib_i8 = builder.CreateIntToPtr(tib_addr, i8_ptr_type, "tib_i8");
+
+  builder.CreateBr(loop_test);
+
+  // Loop test: check if position < #TIB
+  builder.SetInsertPoint(loop_test);
+  llvm::PHINode *pos_phi = builder.CreatePHI(builder.getInt64Ty(), 2, "pos");
+  pos_phi->addIncoming(to_in, loop_test->getSinglePredecessor());
+  llvm::Value *at_end = builder.CreateICmpUGE(pos_phi, num_tib, "at_end");
+  llvm::BasicBlock *check_delim = llvm::BasicBlock::Create(
+      builder.getContext(), "check_delim", builder.GetInsertBlock()->getParent());
+  builder.CreateCondBr(at_end, loop_exit, check_delim);
+
+  // Check if current character is delimiter
+  builder.SetInsertPoint(check_delim);
+  llvm::Value *char_ptr = builder.CreateGEP(builder.getInt8Ty(), tib_i8, pos_phi, "char_ptr");
+  llvm::Value *ch = builder.CreateLoad(builder.getInt8Ty(), char_ptr, "ch");
+  llvm::Value *ch_i64 = builder.CreateZExt(ch, builder.getInt64Ty(), "ch_i64");
+  llvm::Value *is_delim = builder.CreateICmpEQ(ch_i64, delim, "is_delim");
+  builder.CreateCondBr(is_delim, loop_exit, loop_body);
+
+  // Loop body: increment position
+  builder.SetInsertPoint(loop_body);
+  llvm::Value *next_pos = builder.CreateAdd(pos_phi, builder.getInt64(1), "next_pos");
+  pos_phi->addIncoming(next_pos, loop_body);
+  builder.CreateBr(loop_test);
+
+  // Loop exit: calculate length and update >IN
+  builder.SetInsertPoint(loop_exit);
+  llvm::PHINode *end_pos = builder.CreatePHI(builder.getInt64Ty(), 2, "end_pos");
+  end_pos->addIncoming(pos_phi, loop_test);
+  end_pos->addIncoming(pos_phi, check_delim);
+
+  llvm::Value *length = builder.CreateSub(end_pos, to_in, "length");
+
+  // Update >IN to position after parsed string
+  // If we stopped at delimiter, skip it
+  llvm::Value *stopped_at_delim = builder.CreateICmpULT(end_pos, num_tib, "stopped_at_delim");
+  llvm::Value *new_to_in = builder.CreateSelect(
+      stopped_at_delim,
+      builder.CreateAdd(end_pos, builder.getInt64(1), "skip_delim"),
+      end_pos,
+      "new_to_in");
+  builder.CreateStore(new_to_in, to_in_ptr);
+
+  // Replace delimiter on stack with address, then push length
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, start_addr);
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, length);
+}
+
 } // namespace anvil
 
 #endif // ANVIL_PRIMITIVES_H

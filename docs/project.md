@@ -576,7 +576,7 @@ struct Word {
 
 ## Primitive Word Set
 
-Currently implemented: **38 primitives**
+Currently implemented: **45 primitives**
 
 **Data Stack Operations:**
 - `DUP`, `DROP`, `SWAP`, `OVER`, `ROT`
@@ -623,6 +623,14 @@ Currently implemented: **38 primitives**
 - `RAW-MODE` - Switch terminal to raw mode (no echo, no buffering)
 - `COOKED-MODE` - Restore normal terminal mode
 - `EMIT-ESC` - Output ESC character (ASCII 27) for ANSI escape sequences
+
+**Input Buffer Management:**
+- `TIB` - Returns address of Terminal Input Buffer
+- `>IN` - Returns address of current parse position variable
+- `#TIB` - Returns address of buffer length variable
+- `SOURCE` - Returns TIB address and length (equivalent to `TIB #TIB @`)
+- `ACCEPT` - Read a line of input with backspace support ( c-addr +n1 -- +n2 )
+- `PARSE` - Parse string from input until delimiter ( char "ccc<char>" -- c-addr u )
 
 All primitives emit LLVM IR directly (no function calls for stack operations).
 Primitives work identically in all three execution modes (Interpreter, JIT, AOT).
@@ -836,13 +844,14 @@ make test
 ```
 
 **Test Coverage:**
-- 181 total tests, all passing (100%)
+- 198 total tests, all passing (100%)
 - All primitive tests run in both JIT and Interpreter modes automatically
 - Stdlib words tested in both modes
 - Ensures semantic consistency across execution modes
 
 **Test Organization:**
 - `tests/test_primitives.cpp` - All primitives tested in JIT + Interpreter modes
+- `tests/test_input_buffer.cpp` - Input buffer primitives (TIB, >IN, #TIB, SOURCE, PARSE)
 - `tests/test_compiler.cpp` - Compiler and high-level features (JIT mode)
 - `tests/test_interpreter.cpp` - Interpreter-specific tests
 - `tests/test_stdlib.cpp` - Standard library words (both modes)
@@ -859,6 +868,8 @@ make test
 ./anvil_tests "[primitives][jit]"      # JIT mode only
 ./anvil_tests "[primitives][interpreter]" # Interpreter mode only
 ./anvil_tests "[stdlib]"               # Standard library tests
+./anvil_tests "[input]"                # Input buffer management tests
+./anvil_tests "[terminal]"             # Terminal I/O tests
 ```
 
 ## Language Features
@@ -880,6 +891,9 @@ Anvil automatically loads a standard library (`stdlib.fth`) at startup, providin
 - `BL ( -- 32 )` - Push space character code (constant)
 - `SPACE ( -- )` - Output a single space
 - `SPACES ( n -- )` - Output n spaces
+- `COUNT ( c-addr -- c-addr+1 u )` - Convert counted string to address and length
+- `REFILL ( -- flag )` - Read new line into TIB, reset >IN, return true
+- `WORD ( char -- c-addr )` - Parse word delimited by char, return counted string at HERE
 
 The standard library is compiled to LLVM IR and added to the global dictionary, making these words available immediately in the REPL and in all execution modes (JIT, interpreter, and AOT).
 

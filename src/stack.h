@@ -10,19 +10,25 @@ namespace anvil {
 constexpr size_t DATA_STACK_SIZE = 1024;
 constexpr size_t RETURN_STACK_SIZE = 1024;
 constexpr size_t DATA_SPACE_SIZE = 65536;  // 64KB data space for variables
+constexpr size_t TIB_SIZE = 1024;          // Terminal Input Buffer size
 
 // Execution context containing both Forth stacks and data space
 struct ExecutionContext {
     int64_t data_stack[DATA_STACK_SIZE];
     int64_t return_stack[RETURN_STACK_SIZE];
     uint8_t data_space[DATA_SPACE_SIZE];  // Memory for variables/allotted space
+    uint8_t tib[TIB_SIZE];                 // Terminal Input Buffer
 
     // Stack pointers (point to next free slot)
-    size_t dsp;  // Data stack pointer
-    size_t rsp;  // Return stack pointer
-    size_t here; // Data space pointer (next free byte)
+    uint64_t dsp;   // Data stack pointer
+    uint64_t rsp;   // Return stack pointer
+    uint64_t here;  // Data space pointer (next free byte)
 
-    ExecutionContext() : dsp(0), rsp(0), here(0) {}
+    // Input buffer state
+    uint64_t to_in;   // Current parse position in TIB (>IN in Forth)
+    uint64_t num_tib; // Number of characters in TIB (#TIB in Forth)
+
+    ExecutionContext() : dsp(0), rsp(0), here(0), to_in(0), num_tib(0) {}
 };
 
 } // namespace anvil

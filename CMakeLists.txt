@@ -75,6 +75,7 @@ endif()
 # Test executable
 add_executable(anvil_tests
     tests/test_primitives.cpp
+    tests/test_input_buffer.cpp
     tests/test_dictionary.cpp
     tests/test_parser.cpp
     tests/test_ast.cpp
