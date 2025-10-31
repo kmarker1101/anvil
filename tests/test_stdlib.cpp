@@ -525,3 +525,73 @@ TEST_CASE("Standard Library - Memory helpers combined", "[stdlib][memory]") {
         REQUIRE(ctx.data_stack[0] == 42);
     }
 }
+
+TEST_CASE("Standard Library - BL", "[stdlib][bl]") {
+    SECTION("BL pushes space character code") {
+        auto ctx = execute_with_stdlib("BL");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 32);  // ASCII space
+    }
+
+    SECTION("BL in JIT mode") {
+        auto ctx = execute_with_stdlib("BL", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 32);
+    }
+
+    SECTION("BL in interpreter mode") {
+        auto ctx = execute_with_stdlib("BL", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 32);
+    }
+}
+
+TEST_CASE("Standard Library - SPACE", "[stdlib][space]") {
+    SECTION("SPACE outputs a space") {
+        auto ctx = execute_with_stdlib("SPACE");
+        REQUIRE(ctx.dsp == 0);  // Stack should be empty after SPACE
+    }
+
+    SECTION("Multiple SPACE calls") {
+        auto ctx = execute_with_stdlib("SPACE SPACE SPACE");
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION("SPACE in JIT mode") {
+        auto ctx = execute_with_stdlib("SPACE", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION("SPACE in interpreter mode") {
+        auto ctx = execute_with_stdlib("SPACE", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 0);
+    }
+}
+
+TEST_CASE("Standard Library - SPACES", "[stdlib][spaces]") {
+    SECTION("SPACES with positive count") {
+        // SPACES consumes the count and outputs spaces
+        auto ctx = execute_with_stdlib("5 SPACES");
+        REQUIRE(ctx.dsp == 0);  // Stack should be empty after SPACES
+    }
+
+    SECTION("SPACES with zero") {
+        auto ctx = execute_with_stdlib("0 SPACES");
+        REQUIRE(ctx.dsp == 0);  // Stack should be empty
+    }
+
+    SECTION("SPACES in JIT mode") {
+        auto ctx = execute_with_stdlib("3 SPACES", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION("SPACES in interpreter mode") {
+        auto ctx = execute_with_stdlib("10 SPACES", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION("Multiple SPACES calls") {
+        auto ctx = execute_with_stdlib("2 SPACES 3 SPACES");
+        REQUIRE(ctx.dsp == 0);
+    }
+}
