@@ -672,44 +672,13 @@ int main(int argc, char** argv) {
     }
     // If repl.fth doesn't exist, fall back to C++ REPL
 
-    // Start Forth REPL by invoking QUIT word
-    if (repl_loaded) {
-        // Look up QUIT in the dictionary
-        const DictionaryEntry* quit_entry = global_dictionary.find_word("QUIT");
-        if (quit_entry && quit_entry->llvm_func) {
-            // Create execution engine to run QUIT
-            auto module_clone = llvm::CloneModule(*state.module);
-
-            std::string engine_error;
-            AnvilExecutionEngine* engine = AnvilExecutionEngine::create(
-                std::move(module_clone), state.mode, &engine_error);
-
-            if (engine) {
-                // Execute QUIT (which runs the REPL loop)
-                engine->execute(quit_entry->llvm_func, &state.ctx);
-                delete engine;
-            } else {
-                std::cerr << "Failed to create engine for QUIT: " << engine_error << "\n";
-                repl_loaded = false; // Fall back to C++ REPL
-            }
-        } else {
-            std::cerr << "Warning: QUIT word not found in dictionary, using C++ REPL\n";
-            repl_loaded = false; // Fall back to C++ REPL
-        }
-
-        if (repl_loaded) {
-            std::cout << "Goodbye!\n";
-            return 0;
-        }
-    }
-
-    // Fallback C++ REPL loop (only if repl.fth not found)
+    // C++ REPL loop (repl.fth provides helper words but C++ manages the loop)
 #ifdef HAVE_READLINE
     // Use readline with history
     using_history();
 
     while (true) {
-        char* input = readline("> ");
+        char* input = readline("");  // Empty prompt - we'll echo input ourselves
 
         // EOF (Ctrl-D)
         if (!input) {
@@ -724,15 +693,24 @@ int main(int argc, char** argv) {
             add_history(input);
         }
 
+        // Echo the input line so it stays visible
+        std::cout << line;
+        if (!line.empty()) {
+            std::cout << " ";  // Space before output
+        }
+
         free(input);
 
         // Handle special REPL commands
         if (line == "quit" || line == "exit" || line == "bye") {
+            std::cout << "\n";
             break;
         } else if (line == ".s") {
+            std::cout << "\n";
             print_stack(state.ctx);
             continue;
         } else if (line == "help") {
+            std::cout << "\n";
             std::cout << "REPL commands:\n";
             std::cout << "  .s          Show stack\n";
             std::cout << "  quit        Exit\n";
@@ -748,21 +726,27 @@ int main(int argc, char** argv) {
     // Fallback to basic input without readline
     std::string line;
     while (true) {
-        std::cout << "> ";
-        std::cout.flush();
-
         if (!std::getline(std::cin, line)) {
             std::cout << "\n";
             break; // EOF
         }
 
+        // Echo input for GForth-style output
+        std::cout << line;
+        if (!line.empty()) {
+            std::cout << " ";
+        }
+
         // Handle special REPL commands
         if (line == "quit" || line == "exit" || line == "bye") {
+            std::cout << "\n";
             break;
         } else if (line == ".s") {
+            std::cout << "\n";
             print_stack(state.ctx);
             continue;
         } else if (line == "help") {
+            std::cout << "\n";
             std::cout << "REPL commands:\n";
             std::cout << "  .s          Show stack\n";
             std::cout << "  quit        Exit\n";
