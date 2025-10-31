@@ -51,9 +51,9 @@ CONSTANT BL 32              \ BL is the space character (ASCII 32)
 \ Input buffer helpers
 : REFILL ( -- flag )
     TIB 1024 ACCEPT     \ Read line into TIB (up to 1024 chars)
-    #TIB !              \ Store length in #TIB
+    DUP #TIB !          \ Store length in #TIB
     0 >IN !             \ Reset parse position to start
-    -1 ;                \ Return true (successfully refilled)
+    0= 0= ;             \ Return true if length > 0 (double negation)
 
 \ WORD - parse word and return counted string
 \ Uses data space at HERE as temporary buffer
