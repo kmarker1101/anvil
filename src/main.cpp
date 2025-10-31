@@ -81,8 +81,13 @@ void print_stack(const ExecutionContext& ctx) {
 
 // Execute a line of Forth code
 bool execute_line(const std::string& line, ReplState& state) {
-    if (line.empty() || line[0] == '\\') {
-        return true; // Comment or empty line
+    if (line.empty()) {
+        return true; // Empty line
+    }
+
+    // Only skip if it's a single-line comment (doesn't contain newlines)
+    if (line[0] == '\\' && line.find('\n') == std::string::npos) {
+        return true; // Single-line comment
     }
 
     try {
@@ -655,17 +660,50 @@ int main(int argc, char** argv) {
     // Load REPL infrastructure (only for interactive mode)
     std::string repl_path = exe_dir + path_sep + "repl.fth";
     std::ifstream repl_file(repl_path);
+    bool repl_loaded = false;
     if (repl_file.is_open()) {
         std::stringstream buffer;
         buffer << repl_file.rdbuf();
         std::string repl_source = buffer.str();
         repl_file.close();
 
-        execute_line(repl_source, state);
+        bool repl_execute_ok = execute_line(repl_source, state);
+        repl_loaded = repl_execute_ok;
     }
-    // If repl.fth doesn't exist, continue without it
+    // If repl.fth doesn't exist, fall back to C++ REPL
 
-    // REPL loop
+    // Start Forth REPL by invoking QUIT word
+    if (repl_loaded) {
+        // Look up QUIT in the dictionary
+        const DictionaryEntry* quit_entry = global_dictionary.find_word("QUIT");
+        if (quit_entry && quit_entry->llvm_func) {
+            // Create execution engine to run QUIT
+            auto module_clone = llvm::CloneModule(*state.module);
+
+            std::string engine_error;
+            AnvilExecutionEngine* engine = AnvilExecutionEngine::create(
+                std::move(module_clone), state.mode, &engine_error);
+
+            if (engine) {
+                // Execute QUIT (which runs the REPL loop)
+                engine->execute(quit_entry->llvm_func, &state.ctx);
+                delete engine;
+            } else {
+                std::cerr << "Failed to create engine for QUIT: " << engine_error << "\n";
+                repl_loaded = false; // Fall back to C++ REPL
+            }
+        } else {
+            std::cerr << "Warning: QUIT word not found in dictionary, using C++ REPL\n";
+            repl_loaded = false; // Fall back to C++ REPL
+        }
+
+        if (repl_loaded) {
+            std::cout << "Goodbye!\n";
+            return 0;
+        }
+    }
+
+    // Fallback C++ REPL loop (only if repl.fth not found)
 #ifdef HAVE_READLINE
     // Use readline with history
     using_history();

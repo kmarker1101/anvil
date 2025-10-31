@@ -765,23 +765,36 @@ public:
             return module_.getFunction(static_cast<DefinitionNode*>(ast)->name);
         }
 
-        // If it's a sequence, check if all children are definitions
+        // If it's a sequence, check if all children are definitions/variables/constants
         if (ast->type == ASTNodeType::SEQUENCE) {
             auto seq = static_cast<SequenceNode*>(ast);
-            bool all_definitions = true;
+            bool all_declarations = true;
             for (auto& child : seq->children) {
-                if (child->type != ASTNodeType::DEFINITION) {
-                    all_definitions = false;
+                if (child->type != ASTNodeType::DEFINITION &&
+                    child->type != ASTNodeType::VARIABLE &&
+                    child->type != ASTNodeType::CONSTANT) {
+                    all_declarations = false;
                     break;
                 }
             }
 
-            // If all children are definitions, compile them directly
-            if (all_definitions) {
+            // If all children are declarations (definitions/variables/constants), compile them directly
+            if (all_declarations) {
                 llvm::Function* last_func = nullptr;
                 for (auto& child : seq->children) {
-                    compile_definition(static_cast<DefinitionNode*>(child.get()));
-                    last_func = module_.getFunction(static_cast<DefinitionNode*>(child.get())->name);
+                    if (child->type == ASTNodeType::DEFINITION) {
+                        auto def = static_cast<DefinitionNode*>(child.get());
+                        compile_definition(def);
+                        last_func = module_.getFunction(def->name);
+                    } else if (child->type == ASTNodeType::VARIABLE) {
+                        auto var = static_cast<VariableNode*>(child.get());
+                        compile_variable(var);
+                        last_func = module_.getFunction(var->name);
+                    } else if (child->type == ASTNodeType::CONSTANT) {
+                        auto con = static_cast<ConstantNode*>(child.get());
+                        compile_constant(con);
+                        last_func = module_.getFunction(con->name);
+                    }
                 }
                 return last_func;
             }
