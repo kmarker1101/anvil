@@ -743,6 +743,55 @@ inline void emit_find(llvm::IRBuilder<> &builder,
   store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, flag);
 }
 
+// Emit LLVM IR for the NUMBER primitive
+// Stack effect: ( c-addr u -- n flag )
+// Parses string as number, returns number and flag (1 if valid, 0 if invalid)
+inline void emit_number(llvm::IRBuilder<> &builder,
+                        llvm::Value *data_stack_ptr,
+                        llvm::Value *dsp_ptr) {
+  // Load length and address from stack
+  llvm::Value *len = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  llvm::Value *addr = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1);
+
+  // Pop both values
+  adjust_dsp(builder, dsp_ptr, -2);
+
+  // Convert int64 address to pointer
+  llvm::Type *char_ptr_type = llvm::PointerType::get(builder.getContext(), 0);
+  llvm::Value *str_ptr = builder.CreateIntToPtr(addr, char_ptr_type, "str_ptr");
+
+  // Allocate stack space for output parameters
+  llvm::Value *number_out = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "number_out");
+  llvm::Value *flag_out = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "flag_out");
+
+  // Declare the runtime helper function
+  llvm::Module *module = builder.GetInsertBlock()->getParent()->getParent();
+  llvm::Type *int64_ptr_type = llvm::PointerType::get(builder.getContext(), 0);
+  llvm::FunctionType *parse_func_type = llvm::FunctionType::get(
+      builder.getVoidTy(),
+      {char_ptr_type, builder.getInt64Ty(), int64_ptr_type, int64_ptr_type},
+      false
+  );
+  llvm::FunctionCallee parse_func = module->getOrInsertFunction(
+      "anvil_parse_number", parse_func_type
+  );
+
+  // Call the runtime helper
+  builder.CreateCall(parse_func, {str_ptr, len, number_out, flag_out});
+
+  // Load the results
+  llvm::Value *number = builder.CreateLoad(builder.getInt64Ty(), number_out, "number");
+  llvm::Value *flag = builder.CreateLoad(builder.getInt64Ty(), flag_out, "flag");
+
+  // Push number onto stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, number);
+
+  // Push flag onto stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, flag);
+}
+
 // ============================================================================
 // String/IO primitives
 // ============================================================================

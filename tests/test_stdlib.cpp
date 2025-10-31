@@ -842,7 +842,48 @@ TEST_CASE("Standard Library - Interpreter state and execution", "[stdlib][state]
         REQUIRE(ctx.data_stack[0] == -1);   // Should still be -1
     }
 
-    // TODO: Add proper FIND test with string in memory
+    SECTION("FIND locates a defined word using string in memory") {
+        auto ctx = execute_with_stdlib(
+            ": TEST-WORD 42 ; "     // Define a word
+            // Create string "TEST-WORD" in memory at HERE
+            "HERE "                 // Address where we'll store the string
+            "84 OVER C! "           // 'T'
+            "69 OVER 1 + C! "       // 'E'
+            "83 OVER 2 + C! "       // 'S'
+            "84 OVER 3 + C! "       // 'T'
+            "45 OVER 4 + C! "       // '-'
+            "87 OVER 5 + C! "       // 'W'
+            "79 OVER 6 + C! "       // 'O'
+            "82 OVER 7 + C! "       // 'R'
+            "68 OVER 8 + C! "       // 'D'
+            "9 "                    // Length
+            "FIND"                  // ( c-addr u -- xt flag )
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[1] == -1);  // flag: found
+        REQUIRE(ctx.data_stack[0] != 0);   // xt: non-zero address
+    }
+
+    SECTION("FIND returns 0 flag for undefined word") {
+        auto ctx = execute_with_stdlib(
+            "HERE "                 // Address
+            "78 OVER C! "           // 'N'
+            "79 OVER 1 + C! "       // 'O'
+            "83 OVER 2 + C! "       // 'S'
+            "85 OVER 3 + C! "       // 'U'
+            "67 OVER 4 + C! "       // 'C'
+            "72 OVER 5 + C! "       // 'H'
+            "87 OVER 6 + C! "       // 'W'
+            "79 OVER 7 + C! "       // 'O'
+            "82 OVER 8 + C! "       // 'R'
+            "68 OVER 9 + C! "       // 'D'
+            "10 "                   // Length
+            "FIND"
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[1] == 0);   // flag: not found
+        REQUIRE(ctx.data_stack[0] == 0);   // xt: 0 when not found
+    }
 
     SECTION("' (tick) gets execution token and EXECUTE calls it") {
         auto ctx = execute_with_stdlib(
@@ -871,5 +912,77 @@ TEST_CASE("Standard Library - Interpreter state and execution", "[stdlib][state]
         REQUIRE(ctx.dsp == 2);
         REQUIRE(ctx.data_stack[0] == 100);  // Original value
         REQUIRE(ctx.data_stack[1] == 99);   // Value from executed word
+    }
+
+    SECTION("NUMBER parses positive decimal") {
+        auto ctx = execute_with_stdlib(
+            "HERE "                 // Address
+            "49 OVER C! "           // '1'
+            "50 OVER 1 + C! "       // '2'
+            "51 OVER 2 + C! "       // '3'
+            "3 "                    // Length
+            "NUMBER"                // ( c-addr u -- n flag )
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 123);  // Parsed number
+        REQUIRE(ctx.data_stack[1] == 1);    // flag: valid
+    }
+
+    SECTION("NUMBER parses negative number") {
+        auto ctx = execute_with_stdlib(
+            "HERE "                 // Address
+            "45 OVER C! "           // '-'
+            "52 OVER 1 + C! "       // '4'
+            "50 OVER 2 + C! "       // '2'
+            "3 "                    // Length
+            "NUMBER"
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == -42);  // Parsed number
+        REQUIRE(ctx.data_stack[1] == 1);    // flag: valid
+    }
+
+    SECTION("NUMBER returns 0 flag for invalid string") {
+        auto ctx = execute_with_stdlib(
+            "HERE "                 // Address
+            "88 OVER C! "           // 'X'
+            "89 OVER 1 + C! "       // 'Y'
+            "90 OVER 2 + C! "       // 'Z'
+            "3 "                    // Length
+            "NUMBER"
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 0);    // number (0 for invalid)
+        REQUIRE(ctx.data_stack[1] == 0);    // flag: invalid
+    }
+
+    SECTION("INTERPRET-WORD executes a word") {
+        auto ctx = execute_with_stdlib(
+            ": ADD5 5 + ; "         // Define word that adds 5
+            "10 "                   // Put 10 on stack
+            // Create string "ADD5" in memory
+            "HERE "                 // Address
+            "65 OVER C! "           // 'A'
+            "68 OVER 1 + C! "       // 'D'
+            "68 OVER 2 + C! "       // 'D'
+            "53 OVER 3 + C! "       // '5'
+            "4 "                    // Length
+            "INTERPRET-WORD"        // Should find and execute ADD5
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 15);   // 10 + 5
+    }
+
+    SECTION("INTERPRET-WORD interprets a number") {
+        auto ctx = execute_with_stdlib(
+            // Create string "42" in memory
+            "HERE "                 // Address
+            "52 OVER C! "           // '4'
+            "50 OVER 1 + C! "       // '2'
+            "2 "                    // Length
+            "INTERPRET-WORD"        // Should parse as number
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);   // Parsed number
     }
 }

@@ -27,11 +27,39 @@ VARIABLE STATE-VAR              \ STATE-VAR returns address of the variable
 \ Primitives available:
 \ - FIND ( c-addr u -- xt flag ) - Find word in dictionary
 \ - EXECUTE ( xt -- ) - Execute an execution token
+\ - NUMBER ( c-addr u -- n flag ) - Parse string as number
 \ - ' name - Get execution token of word (now works with JIT!)
 
+\ INTERPRET-WORD: interpret a single word (address and length on stack)
+\ Stack effect: ( c-addr u -- )
+: INTERPRET-WORD ( c-addr u -- )
+    2DUP FIND           \ ( c-addr u c-addr u xt flag )
+    IF                  \ Found in dictionary
+        NIP NIP         \ ( xt ) - drop address and length
+        EXECUTE         \ Execute the word
+    ELSE                \ Not found, try as number
+        DROP            \ ( c-addr u ) - drop 0 xt
+        NUMBER          \ ( n flag )
+        IF              \ Valid number
+            \ In interpret mode, number is already on stack - done!
+            \ In compile mode, would need to compile as literal (not implemented)
+            STATE-VAR @ IF
+                \ TODO: Compile mode - need to compile number as literal
+                \ For now, just leave it on stack
+            THEN
+        ELSE
+            \ Not a word and not a number - error
+            DROP        \ Drop the 0 from NUMBER
+            \ Print error (would need string handling)
+            \ For now, just leave a marker
+            -1          \ Push error marker
+        THEN
+    THEN
+;
+
 \ Note: [ and ] would toggle STATE, but require IMMEDIATE flag support
-\ Note: Full QUIT/INTERPRET-LINE requires NUMBER primitive for parsing
-\ Note: For now, these building blocks are available for custom interpreters
+\ Note: Full QUIT loop requires REFILL and line parsing infrastructure
+\ Note: This INTERPRET-WORD provides core interpretation logic
 
 \ Output helpers
 CONSTANT BL 32              \ BL is the space character (ASCII 32)
