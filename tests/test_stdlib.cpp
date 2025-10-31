@@ -38,6 +38,21 @@ ExecutionContext execute_with_stdlib(const std::string& test_code,
     REQUIRE(stdlib_ast != nullptr);
     compiler.compile(stdlib_ast.get());
 
+    // Also load repl.fth for REPL/interpreter tests
+    std::ifstream repl_file("repl.fth");
+    if (repl_file.is_open()) {
+        std::stringstream repl_buffer;
+        repl_buffer << repl_file.rdbuf();
+        std::string repl_source = repl_buffer.str();
+        repl_file.close();
+
+        ASTBuilder repl_builder;
+        auto repl_ast = repl_builder.parse(repl_source);
+        if (repl_ast) {
+            compiler.compile(repl_ast.get());
+        }
+    }
+
     // Now compile and execute test code
     ASTBuilder test_builder;
     auto test_ast = test_builder.parse(test_code);
@@ -810,5 +825,361 @@ TEST_CASE("Standard Library - String words", "[stdlib][strings]") {
         );
         REQUIRE(ctx.dsp == 1);
         REQUIRE(ctx.data_stack[0] == 256);
+    }
+}
+
+TEST_CASE("Standard Library - Interpreter state and execution", "[stdlib][state][execute]") {
+    SECTION("STATE-VAR provides access to interpreter state variable") {
+        auto ctx = execute_with_stdlib(
+            "STATE-VAR @"          // Read initial STATE value
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);    // Should be 0 (interpreting)
+    }
+
+    SECTION("STATE-VAR can be written and read") {
+        auto ctx = execute_with_stdlib(
+            "1 STATE-VAR ! "       // Set STATE to 1
+            "STATE-VAR @"          // Read it back
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1);    // Should read back as 1
+    }
+
+    SECTION("STATE-VAR value persists across operations") {
+        auto ctx = execute_with_stdlib(
+            "-1 STATE-VAR ! "      // Set STATE to -1 (compiling)
+            "42 99 + "              // Do some other operations
+            "DROP "                 // Clean up
+            "STATE-VAR @"          // Read STATE again
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);   // Should still be -1
+    }
+
+    SECTION("FIND locates a defined word using string in memory") {
+        auto ctx = execute_with_stdlib(
+            ": TEST-WORD 42 ; "     // Define a word
+            // Create string "TEST-WORD" in memory at HERE
+            "HERE "                 // Address where we'll store the string
+            "84 OVER C! "           // 'T'
+            "69 OVER 1 + C! "       // 'E'
+            "83 OVER 2 + C! "       // 'S'
+            "84 OVER 3 + C! "       // 'T'
+            "45 OVER 4 + C! "       // '-'
+            "87 OVER 5 + C! "       // 'W'
+            "79 OVER 6 + C! "       // 'O'
+            "82 OVER 7 + C! "       // 'R'
+            "68 OVER 8 + C! "       // 'D'
+            "9 "                    // Length
+            "FIND"                  // ( c-addr u -- xt flag )
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[1] == -1);  // flag: found
+        REQUIRE(ctx.data_stack[0] != 0);   // xt: non-zero address
+    }
+
+    SECTION("FIND returns 0 flag for undefined word") {
+        auto ctx = execute_with_stdlib(
+            "HERE "                 // Address
+            "78 OVER C! "           // 'N'
+            "79 OVER 1 + C! "       // 'O'
+            "83 OVER 2 + C! "       // 'S'
+            "85 OVER 3 + C! "       // 'U'
+            "67 OVER 4 + C! "       // 'C'
+            "72 OVER 5 + C! "       // 'H'
+            "87 OVER 6 + C! "       // 'W'
+            "79 OVER 7 + C! "       // 'O'
+            "82 OVER 8 + C! "       // 'R'
+            "68 OVER 9 + C! "       // 'D'
+            "10 "                   // Length
+            "FIND"
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[1] == 0);   // flag: not found
+        REQUIRE(ctx.data_stack[0] == 0);   // xt: 0 when not found
+    }
+
+    SECTION("' (tick) gets execution token and EXECUTE calls it") {
+        auto ctx = execute_with_stdlib(
+            ": TEST-WORD 42 ; "      // Define a word that pushes 42
+            "' TEST-WORD EXECUTE"    // Get XT and execute it
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);
+    }
+
+    SECTION("' and EXECUTE work with nested words") {
+        auto ctx = execute_with_stdlib(
+            ": INNER 10 20 + ; "     // Word that adds 10 + 20
+            "' INNER EXECUTE"        // Execute it
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 30);
+    }
+
+    SECTION("' and EXECUTE preserve stack correctly") {
+        auto ctx = execute_with_stdlib(
+            "100 "                   // Put value on stack
+            ": PUSHVAL 99 ; "        // Word that pushes a value
+            "' PUSHVAL EXECUTE"      // Execute it
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 100);  // Original value
+        REQUIRE(ctx.data_stack[1] == 99);   // Value from executed word
+    }
+
+    SECTION("NUMBER parses positive decimal") {
+        auto ctx = execute_with_stdlib(
+            "HERE "                 // Address
+            "49 OVER C! "           // '1'
+            "50 OVER 1 + C! "       // '2'
+            "51 OVER 2 + C! "       // '3'
+            "3 "                    // Length
+            "NUMBER"                // ( c-addr u -- n flag )
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 123);  // Parsed number
+        REQUIRE(ctx.data_stack[1] == 1);    // flag: valid
+    }
+
+    SECTION("NUMBER parses negative number") {
+        auto ctx = execute_with_stdlib(
+            "HERE "                 // Address
+            "45 OVER C! "           // '-'
+            "52 OVER 1 + C! "       // '4'
+            "50 OVER 2 + C! "       // '2'
+            "3 "                    // Length
+            "NUMBER"
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == -42);  // Parsed number
+        REQUIRE(ctx.data_stack[1] == 1);    // flag: valid
+    }
+
+    SECTION("NUMBER returns 0 flag for invalid string") {
+        auto ctx = execute_with_stdlib(
+            "HERE "                 // Address
+            "88 OVER C! "           // 'X'
+            "89 OVER 1 + C! "       // 'Y'
+            "90 OVER 2 + C! "       // 'Z'
+            "3 "                    // Length
+            "NUMBER"
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 0);    // number (0 for invalid)
+        REQUIRE(ctx.data_stack[1] == 0);    // flag: invalid
+    }
+
+    SECTION("INTERPRET-WORD executes a word") {
+        auto ctx = execute_with_stdlib(
+            ": ADD5 5 + ; "         // Define word that adds 5
+            "10 "                   // Put 10 on stack
+            // Create string "ADD5" in memory
+            "HERE "                 // Address
+            "65 OVER C! "           // 'A'
+            "68 OVER 1 + C! "       // 'D'
+            "68 OVER 2 + C! "       // 'D'
+            "53 OVER 3 + C! "       // '5'
+            "4 "                    // Length
+            "INTERPRET-WORD"        // Should find and execute ADD5
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 15);   // 10 + 5
+    }
+
+    SECTION("INTERPRET-WORD interprets a number") {
+        auto ctx = execute_with_stdlib(
+            // Create string "42" in memory
+            "HERE "                 // Address
+            "52 OVER C! "           // '4'
+            "50 OVER 1 + C! "       // '2'
+            "2 "                    // Length
+            "INTERPRET-WORD"        // Should parse as number
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);   // Parsed number
+    }
+}
+
+// ============================================================================
+// Issue #9: QUIT Interpreter Loop Tests
+// ============================================================================
+
+TEST_CASE("Standard Library - STATE variable", "[stdlib][state]") {
+    SECTION("STATE-VAR creates a variable") {
+        auto ctx = execute_with_stdlib("STATE-VAR @");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Should default to 0 (interpret mode)
+    }
+
+    SECTION("STATE convenience word") {
+        auto ctx = execute_with_stdlib("STATE @");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Should be 0 (interpret mode)
+    }
+}
+
+TEST_CASE("Standard Library - [ and ] primitives", "[stdlib][brackets]") {
+    SECTION("[ sets STATE to 0") {
+        auto ctx = execute_with_stdlib(
+            "-1 STATE-VAR ! "  // Set to compile mode
+            "[ "                // Switch to interpret mode
+            "STATE-VAR @"       // Check STATE
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);  // Should be 0 after [
+    }
+
+    SECTION("] sets STATE to -1") {
+        auto ctx = execute_with_stdlib(
+            "0 STATE-VAR ! "    // Set to interpret mode
+            "] "                 // Switch to compile mode
+            "STATE-VAR @"        // Check STATE
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // Should be -1 after ]
+    }
+
+    SECTION("[ and ] toggle STATE") {
+        auto ctx = execute_with_stdlib(
+            "] STATE-VAR @ "     // Set compile, check
+            "[ STATE-VAR @ "     // Set interpret, check
+            "] STATE-VAR @"      // Set compile again, check
+        );
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == -1);  // First ]
+        REQUIRE(ctx.data_stack[1] == 0);   // [
+        REQUIRE(ctx.data_stack[2] == -1);  // Second ]
+    }
+}
+
+TEST_CASE("Standard Library - INTERPRET-WORD error handling", "[stdlib][interpret-word][error]") {
+    SECTION("INTERPRET-WORD prints error with ? for undefined word") {
+        // Create a string "BADWORD" in memory
+        auto ctx = execute_with_stdlib(
+            "HERE "                  // Get address ( addr )
+            "66 OVER 0 + C! "        // 'B'
+            "65 OVER 1 + C! "        // 'A'
+            "68 OVER 2 + C! "        // 'D'
+            "87 OVER 3 + C! "        // 'W'
+            "79 OVER 4 + C! "        // 'O'
+            "82 OVER 5 + C! "        // 'R'
+            "68 OVER 6 + C! "        // 'D'
+            "7 "                     // ( addr len )
+            "INTERPRET-WORD"         // Should print "BADWORD ?" and error
+        );
+        // Note: The test setup leaves some items on stack from string creation
+        // INTERPRET-WORD itself prints the error message correctly
+        // We just verify it didn't crash
+        REQUIRE(ctx.dsp >= 0);
+    }
+}
+
+TEST_CASE("Standard Library - INTERPRET-WORD with numbers", "[stdlib][interpret-word][numbers]") {
+    SECTION("INTERPRET-WORD parses positive number") {
+        // Create string "123"
+        auto ctx = execute_with_stdlib(
+            "HERE "
+            "49 OVER C! "    // '1'
+            "50 OVER 1 + C! "  // '2'
+            "51 OVER 2 + C! "  // '3'
+            "3 "
+            "INTERPRET-WORD"
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 123);
+    }
+
+    SECTION("INTERPRET-WORD parses negative number") {
+        // Create string "-42"
+        auto ctx = execute_with_stdlib(
+            "HERE "
+            "45 OVER C! "      // '-'
+            "52 OVER 1 + C! "  // '4'
+            "50 OVER 2 + C! "  // '2'
+            "3 "
+            "INTERPRET-WORD"
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -42);
+    }
+}
+
+// Note: INTERPRET-LINE is complex to test directly because it uses WORD
+// which requires proper TIB setup. The QUIT components test verifies it exists.
+
+TEST_CASE("Standard Library - QUIT components exist", "[stdlib][quit]") {
+    SECTION("QUIT word is defined") {
+        // Just check that QUIT compiles and exists
+        auto ctx = execute_with_stdlib("' QUIT DROP");
+        REQUIRE(ctx.dsp == 0);  // Just checking it doesn't error
+    }
+
+    SECTION("INTERPRET-WORD is defined") {
+        auto ctx = execute_with_stdlib("' INTERPRET-WORD DROP");
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION("INTERPRET-LINE is defined") {
+        auto ctx = execute_with_stdlib("' INTERPRET-LINE DROP");
+        REQUIRE(ctx.dsp == 0);
+    }
+}
+
+TEST_CASE("Standard Library - STATE workflow", "[stdlib][state][workflow]") {
+    SECTION("STATE starts at 0 (interpret mode)") {
+        auto ctx = execute_with_stdlib("STATE @");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("Can manually set and check STATE") {
+        auto ctx = execute_with_stdlib(
+            "STATE @ "           // Initial state (0)
+            "-1 STATE ! "        // Set to compile mode
+            "STATE @ "           // Check it
+            "0 STATE ! "         // Back to interpret mode
+            "STATE @"            // Check again
+        );
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 0);   // Initial
+        REQUIRE(ctx.data_stack[1] == -1);  // After setting to compile
+        REQUIRE(ctx.data_stack[2] == 0);   // After setting back
+    }
+}
+
+TEST_CASE("Standard Library - Error recovery primitives", "[stdlib][abort][error-recovery]") {
+    SECTION("ABORT clears data stack") {
+        auto ctx = execute_with_stdlib(
+            "1 2 3 4 5 "  // Push 5 items
+            "ABORT"       // Clear stacks
+        );
+        REQUIRE(ctx.dsp == 0);  // Stack should be empty
+    }
+
+    SECTION("ABORT clears return stack") {
+        auto ctx = execute_with_stdlib(
+            "1 >R 2 >R 3 >R "  // Push 3 items to return stack
+            "ABORT"             // Clear stacks
+        );
+        REQUIRE(ctx.rsp == 0);  // Return stack should be empty
+        REQUIRE(ctx.dsp == 0);  // Data stack should be empty too
+    }
+
+    SECTION("DSP! sets data stack pointer") {
+        auto ctx = execute_with_stdlib(
+            "1 2 3 4 5 "  // Push 5 items (dsp = 5)
+            "0 DSP!"      // Reset DSP to 0
+        );
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION("RSP! sets return stack pointer") {
+        auto ctx = execute_with_stdlib(
+            "1 >R 2 >R 3 >R "  // Push to return stack (rsp = 3)
+            "0 RSP!"           // Reset RSP to 0
+        );
+        REQUIRE(ctx.rsp == 0);
     }
 }

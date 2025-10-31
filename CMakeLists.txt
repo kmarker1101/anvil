@@ -60,6 +60,9 @@ add_executable(anvil
     src/main.cpp
     src/dictionary.cpp
     src/primitives_registry.cpp
+    src/execution_engine.cpp
+    src/runtime_helpers.cpp
+    src/number_parser.cpp
     src/terminal.c
 )
 target_link_libraries(anvil ${llvm_libs})
@@ -88,6 +91,9 @@ add_executable(anvil_tests
     tests/test_terminal.cpp
     src/dictionary.cpp
     src/primitives_registry.cpp
+    src/execution_engine.cpp
+    src/runtime_helpers.cpp
+    src/number_parser.cpp
     src/terminal.c
 )
 target_link_libraries(anvil_tests PRIVATE Catch2::Catch2WithMain ${llvm_libs})
@@ -102,5 +108,6 @@ catch_discover_tests(anvil_tests)
 add_library(anvil_runtime STATIC src/runtime.c src/terminal.c)
 target_include_directories(anvil_runtime PUBLIC src)
 
-# Copy standard library to build directory
+# Copy Forth libraries to build directory
 configure_file(${CMAKE_SOURCE_DIR}/forth/stdlib.fth ${CMAKE_BINARY_DIR}/stdlib.fth COPYONLY)
+configure_file(${CMAKE_SOURCE_DIR}/forth/repl.fth ${CMAKE_BINARY_DIR}/repl.fth COPYONLY)

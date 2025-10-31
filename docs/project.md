@@ -794,6 +794,18 @@ Performance comes from compilation strategy (inlined native code) rather than mi
 
 ## Future Directions
 
+- **QUIT interpreter loop** (Issue #9 - ✅ COMPLETE):
+  - ✅ `QUIT` - Main interpreter loop with REFILL, INTERPRET-LINE, and "ok" prompts
+  - ✅ `INTERPRET-LINE` - Processes lines of input by parsing words
+  - ✅ `INTERPRET-WORD` - Handles individual words via FIND/EXECUTE or NUMBER parsing
+  - ✅ `STATE-VAR` / `STATE` - Interpreter state variable (0=interpret, -1=compile)
+  - ✅ `[` and `]` primitives - Switch between interpret and compile modes
+  - ✅ `NUMBER` primitive - Parses decimal/hex numeric literals
+  - ✅ `FIND` primitive - Runtime dictionary lookup with JIT support
+  - ✅ ' (tick) and EXECUTE - Proper JIT address resolution
+  - ✅ Error handling - Undefined words print "word ?" message
+  - 🔲 IMMEDIATE flag in INTERPRET-WORD (future: Forth-side compilation)
+  - 🔲 Forth-side `:` and `;` compilation (future: self-hosting)
 - Profile-guided optimization: track execution counts, recompile hot words with higher optimization
 - Background compilation: compile in separate thread while interpreting
 - Code garbage collection: reclaim unused compiled words
@@ -851,10 +863,12 @@ make test
 ```
 
 **Test Coverage:**
-- 198 total tests, all passing (100%)
+- 233 total tests, all passing (100%)
 - All primitive tests run in both JIT and Interpreter modes automatically
 - Stdlib words tested in both modes
 - Ensures semantic consistency across execution modes
+- Complete Issue #9 test coverage for QUIT interpreter loop
+- Error recovery primitives (ABORT, DSP!, RSP!) tested
 
 **Test Organization:**
 - `tests/test_primitives.cpp` - All primitives tested in JIT + Interpreter modes
@@ -918,6 +932,28 @@ Anvil automatically loads a standard library (`stdlib.fth`) at startup, providin
 **Input buffer:**
 - `REFILL ( -- flag )` - Read new line into TIB, reset >IN, return true
 - `WORD ( char -- c-addr )` - Parse word delimited by char, return counted string at HERE
+
+**Interpreter infrastructure (Issue #9 - ✅ Complete):**
+- `STATE-VAR ( -- addr )` - Variable holding interpreter state
+- `STATE ( -- addr )` - Convenience word for STATE-VAR address
+- `[ ( -- )` - Switch to interpret mode (sets STATE to 0)
+- `] ( -- )` - Switch to compile mode (sets STATE to -1)
+- `FIND ( c-addr u -- xt flag )` - Search dictionary, return XT and flag (-1=found, 0=not found)
+- `EXECUTE ( xt -- )` - Execute the execution token on stack
+- `' name ( -- xt )` - Get execution token (uses FIND at runtime for JIT addresses)
+- `NUMBER ( c-addr u -- n flag )` - Parse string as number (decimal/hex), return value and flag
+- `INTERPRET-WORD ( c-addr u -- )` - Core interpretation: FIND→EXECUTE or NUMBER, prints "word ?" on error
+- `INTERPRET-LINE ( -- )` - Process one line by parsing and interpreting words from TIB
+- `QUIT ( -- )` - Main interpreter loop: REFILL→INTERPRET-LINE with "ok" prompts
+
+**QUIT Loop:** Anvil now has a complete QUIT interpreter loop infrastructure with error recovery. QUIT reads lines with REFILL, processes them with INTERPRET-LINE (which parses words and calls INTERPRET-WORD), and displays "ok" prompts after successful interpretation. INTERPRET-WORD uses FIND for dictionary lookup with proper JIT address resolution, falls back to NUMBER for numeric literals, prints "word ?" error messages for undefined words, and calls ABORT to clear stacks and recover. The [ and ] primitives manage STATE for future Forth-side compilation support.
+
+**Error Recovery:**
+- `ABORT ( -- )` - Clears both data and return stacks by resetting pointers to 0
+- `DSP! ( n -- )` - Sets data stack pointer to n (for manual stack management)
+- `RSP! ( n -- )` - Sets return stack pointer to n (for manual stack management)
+
+These primitives ensure the REPL can recover gracefully from errors without crashing or leaving garbage on the stacks.
 
 The standard library is compiled to LLVM IR and added to the global dictionary, making these words available immediately in the REPL and in all execution modes (JIT, interpreter, and AOT).
 

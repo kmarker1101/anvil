@@ -18,6 +18,12 @@
 
 namespace anvil {
 
+// Forward declaration
+class AnvilExecutionEngine;
+
+// Global execution engine pointer (for runtime helpers)
+extern AnvilExecutionEngine* global_engine;
+
 // Execution mode for Anvil
 enum class ExecutionMode {
     JIT,          // JIT compilation (default, fast)
@@ -55,7 +61,12 @@ public:
             return nullptr;
         }
 
-        return new AnvilExecutionEngine(engine, mode);
+        AnvilExecutionEngine* anvil_engine = new AnvilExecutionEngine(engine, mode);
+
+        // Set global engine for runtime helpers
+        global_engine = anvil_engine;
+
+        return anvil_engine;
     }
 
     // Execute a compiled function with an execution context

@@ -666,13 +666,16 @@ inline void emit_lit(llvm::IRBuilder<> &builder,
 //   void (*)(ExecutionContext*)
 inline void emit_execute(llvm::IRBuilder<> &builder,
                          llvm::Value *data_stack_ptr,
-                         llvm::Value *dsp_ptr,
-                         llvm::Value *ctx_ptr) {
+                         llvm::Value *dsp_ptr) {
   // Load the execution token (function pointer as int64) from top of stack
   llvm::Value *xt_int = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
 
   // Pop the execution token
   adjust_dsp(builder, dsp_ptr, -1);
+
+  // Get the context pointer from the current function's first argument
+  llvm::Function *current_func = builder.GetInsertBlock()->getParent();
+  llvm::Value *ctx_ptr = current_func->getArg(0);
 
   // Convert int64 to function pointer
   // Function signature: void (*)(ExecutionContext*)
@@ -689,6 +692,104 @@ inline void emit_execute(llvm::IRBuilder<> &builder,
 
   // Call the function, passing the ExecutionContext pointer
   builder.CreateCall(func_type, func_ptr, {ctx_ptr});
+}
+
+// Emit LLVM IR for the FIND primitive
+// Stack effect: ( c-addr u -- xt flag )
+// Searches dictionary for word, returns XT and flag (-1 if found, 0 if not)
+inline void emit_find(llvm::IRBuilder<> &builder,
+                      llvm::Value *data_stack_ptr,
+                      llvm::Value *dsp_ptr) {
+  // Load length and address from stack
+  llvm::Value *len = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  llvm::Value *addr = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1);
+
+  // Pop both values
+  adjust_dsp(builder, dsp_ptr, -2);
+
+  // Convert int64 address to pointer
+  llvm::Type *char_ptr_type = llvm::PointerType::get(builder.getContext(), 0);
+  llvm::Value *str_ptr = builder.CreateIntToPtr(addr, char_ptr_type, "str_ptr");
+
+  // Declare the runtime helper function
+  llvm::Module *module = builder.GetInsertBlock()->getParent()->getParent();
+  llvm::FunctionType *find_func_type = llvm::FunctionType::get(
+      builder.getInt64Ty(),
+      {char_ptr_type, builder.getInt64Ty()},
+      false
+  );
+  llvm::FunctionCallee find_func = module->getOrInsertFunction(
+      "anvil_find_word", find_func_type
+  );
+
+  // Call the runtime helper
+  llvm::Value *xt = builder.CreateCall(find_func, {str_ptr, len}, "xt");
+
+  // Check if found (xt != 0)
+  llvm::Value *found = builder.CreateICmpNE(xt, builder.getInt64(0), "found");
+  llvm::Value *flag = builder.CreateSelect(
+      found,
+      builder.getInt64(-1),  // Found: return -1
+      builder.getInt64(0),   // Not found: return 0
+      "flag"
+  );
+
+  // Push XT onto stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, xt);
+
+  // Push flag onto stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, flag);
+}
+
+// Emit LLVM IR for the NUMBER primitive
+// Stack effect: ( c-addr u -- n flag )
+// Parses string as number, returns number and flag (1 if valid, 0 if invalid)
+inline void emit_number(llvm::IRBuilder<> &builder,
+                        llvm::Value *data_stack_ptr,
+                        llvm::Value *dsp_ptr) {
+  // Load length and address from stack
+  llvm::Value *len = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+  llvm::Value *addr = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 1);
+
+  // Pop both values
+  adjust_dsp(builder, dsp_ptr, -2);
+
+  // Convert int64 address to pointer
+  llvm::Type *char_ptr_type = llvm::PointerType::get(builder.getContext(), 0);
+  llvm::Value *str_ptr = builder.CreateIntToPtr(addr, char_ptr_type, "str_ptr");
+
+  // Allocate stack space for output parameters
+  llvm::Value *number_out = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "number_out");
+  llvm::Value *flag_out = builder.CreateAlloca(builder.getInt64Ty(), nullptr, "flag_out");
+
+  // Declare the runtime helper function
+  llvm::Module *module = builder.GetInsertBlock()->getParent()->getParent();
+  llvm::Type *int64_ptr_type = llvm::PointerType::get(builder.getContext(), 0);
+  llvm::FunctionType *parse_func_type = llvm::FunctionType::get(
+      builder.getVoidTy(),
+      {char_ptr_type, builder.getInt64Ty(), int64_ptr_type, int64_ptr_type},
+      false
+  );
+  llvm::FunctionCallee parse_func = module->getOrInsertFunction(
+      "anvil_parse_number", parse_func_type
+  );
+
+  // Call the runtime helper
+  builder.CreateCall(parse_func, {str_ptr, len, number_out, flag_out});
+
+  // Load the results
+  llvm::Value *number = builder.CreateLoad(builder.getInt64Ty(), number_out, "number");
+  llvm::Value *flag = builder.CreateLoad(builder.getInt64Ty(), flag_out, "flag");
+
+  // Push number onto stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, number);
+
+  // Push flag onto stack
+  adjust_dsp(builder, dsp_ptr, 1);
+  store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, flag);
 }
 
 // ============================================================================
@@ -1445,6 +1546,104 @@ inline void emit_compare(llvm::IRBuilder<> &builder,
   result_phi->addIncoming(len_diff, compare_lengths);
 
   store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, result_phi);
+}
+
+// ============================================================================
+// Interpreter state primitives
+// ============================================================================
+
+// Emit LLVM IR for the [ primitive (left-bracket)
+// Stack effect: ( -- )
+// Switches to interpret state by setting STATE to 0
+// This is an IMMEDIATE word
+inline void emit_left_bracket(llvm::IRBuilder<> &builder,
+                               llvm::Value *data_stack_ptr,
+                               llvm::Value *data_space_ptr,
+                               llvm::Value *dsp_ptr) {
+  // Get the address of STATE-VAR (first variable in data space at offset 0)
+  llvm::Value *state_addr = builder.CreatePtrToInt(
+      data_space_ptr, builder.getInt64Ty(), "state_addr"
+  );
+
+  // Convert address back to pointer
+  llvm::Value *state_ptr = builder.CreateIntToPtr(
+      state_addr,
+      llvm::PointerType::get(builder.getContext(), 0),
+      "state_ptr"
+  );
+
+  // Store 0 (interpret mode)
+  builder.CreateStore(builder.getInt64(0), state_ptr);
+}
+
+// Emit LLVM IR for the ] primitive (right-bracket)
+// Stack effect: ( -- )
+// Switches to compile state by setting STATE to -1
+inline void emit_right_bracket(llvm::IRBuilder<> &builder,
+                                llvm::Value *data_stack_ptr,
+                                llvm::Value *data_space_ptr,
+                                llvm::Value *dsp_ptr) {
+  // Get the address of STATE-VAR (first variable in data space at offset 0)
+  llvm::Value *state_addr = builder.CreatePtrToInt(
+      data_space_ptr, builder.getInt64Ty(), "state_addr"
+  );
+
+  // Convert address back to pointer
+  llvm::Value *state_ptr = builder.CreateIntToPtr(
+      state_addr,
+      llvm::PointerType::get(builder.getContext(), 0),
+      "state_ptr"
+  );
+
+  // Store -1 (compile mode)
+  builder.CreateStore(builder.getInt64(-1), state_ptr);
+}
+
+// ============================================================================
+// Stack reset and error recovery primitives
+// ============================================================================
+
+// Emit LLVM IR for the DSP! primitive (set data stack pointer)
+// Stack effect: ( n -- )
+// Sets the data stack pointer to n
+inline void emit_dsp_store(llvm::IRBuilder<> &builder,
+                           llvm::Value *data_stack_ptr,
+                           llvm::Value *dsp_ptr) {
+  // Load the new DSP value from stack
+  llvm::Value *new_dsp = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+
+  // Store it to the DSP pointer
+  builder.CreateStore(new_dsp, dsp_ptr);
+}
+
+// Emit LLVM IR for the RSP! primitive (set return stack pointer)
+// Stack effect: ( n -- )
+// Sets the return stack pointer to n
+inline void emit_rsp_store(llvm::IRBuilder<> &builder,
+                           llvm::Value *data_stack_ptr,
+                           llvm::Value *dsp_ptr,
+                           llvm::Value *rsp_ptr) {
+  // Load the new RSP value from data stack
+  llvm::Value *new_rsp = load_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0);
+
+  // Pop from data stack
+  adjust_dsp(builder, dsp_ptr, -1);
+
+  // Store it to the RSP pointer
+  builder.CreateStore(new_rsp, rsp_ptr);
+}
+
+// Emit LLVM IR for the ABORT primitive
+// Stack effect: ( -- )
+// Clears both stacks by resetting pointers to 0
+inline void emit_abort(llvm::IRBuilder<> &builder,
+                       llvm::Value *dsp_ptr,
+                       llvm::Value *rsp_ptr) {
+  // Reset data stack pointer to 0
+  builder.CreateStore(builder.getInt64(0), dsp_ptr);
+
+  // Reset return stack pointer to 0
+  builder.CreateStore(builder.getInt64(0), rsp_ptr);
 }
 
 } // namespace anvil

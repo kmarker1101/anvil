@@ -27,7 +27,8 @@ enum class ASTNodeType {
     DO_PLUS_LOOP,   // DO ... +LOOP
     STRING_LITERAL, // String literal for S" or ."
     VARIABLE,       // VARIABLE name - creates a variable
-    CONSTANT        // CONSTANT name - creates a constant
+    CONSTANT,       // CONSTANT name - creates a constant
+    TICK            // ' name - get execution token of name
 };
 
 // Base AST node
@@ -93,6 +94,15 @@ struct ConstantNode : public ASTNode {
 
     ConstantNode(const std::string& const_name, int64_t const_value)
         : ASTNode(ASTNodeType::CONSTANT), name(const_name), value(const_value) {}
+};
+
+// Tick node: ' name
+// Pushes the execution token of the named word onto the stack
+struct TickNode : public ASTNode {
+    std::string name;  // The name of the word to get XT for
+
+    TickNode(const std::string& word_name)
+        : ASTNode(ASTNodeType::TICK), name(word_name) {}
 };
 
 // IF...THEN node (no else)
@@ -226,6 +236,8 @@ private:
                 return parse_variable();
             } else if (match_word("CONSTANT")) {
                 return parse_constant();
+            } else if (match_word("'")) {
+                return parse_tick();
             } else if (match_word("IF")) {
                 return parse_if();
             } else if (match_word("BEGIN")) {
@@ -303,6 +315,22 @@ private:
         advance();
 
         return std::make_unique<ConstantNode>(name, value);
+    }
+
+    // Parse ' name (tick)
+    // Syntax: ' name
+    // Pushes execution token of named word onto stack
+    ASTNodePtr parse_tick() {
+        expect_word("'");
+
+        if (at_end() || peek().type != TokenType::WORD) {
+            throw std::runtime_error("Expected word name after '");
+        }
+
+        std::string name = peek().text;
+        advance();
+
+        return std::make_unique<TickNode>(name);
     }
 
     // Parse IF...THEN or IF...ELSE...THEN

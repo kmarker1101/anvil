@@ -1263,7 +1263,7 @@ TEST_BOTH_MODES("EXECUTE primitive", "[primitives][execute]", {
     store_stack_at_depth(builder, main_data_stack_ptr, main_dsp_ptr, 0, func_ptr);
 
     // Execute the function using EXECUTE primitive
-    emit_execute(builder, main_data_stack_ptr, main_dsp_ptr, main_ctx_ptr);
+    emit_execute(builder, main_data_stack_ptr, main_dsp_ptr);
 
     builder.CreateRetVoid();
 
@@ -1396,13 +1396,13 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
     Value* dup_func_ptr = builder.CreatePtrToInt(dup_func, builder.getInt64Ty(), "dup_func_as_int");
     adjust_dsp(builder, main_dsp_ptr, 1);
     store_stack_at_depth(builder, main_data_stack_ptr, main_dsp_ptr, 0, dup_func_ptr);
-    emit_execute(builder, main_data_stack_ptr, main_dsp_ptr, main_ctx_ptr);
+    emit_execute(builder, main_data_stack_ptr, main_dsp_ptr);
 
     // Push add_func address and execute it (stack: 10)
     Value* add_func_ptr = builder.CreatePtrToInt(add_func, builder.getInt64Ty(), "add_func_as_int");
     adjust_dsp(builder, main_dsp_ptr, 1);
     store_stack_at_depth(builder, main_data_stack_ptr, main_dsp_ptr, 0, add_func_ptr);
-    emit_execute(builder, main_data_stack_ptr, main_dsp_ptr, main_ctx_ptr);
+    emit_execute(builder, main_data_stack_ptr, main_dsp_ptr);
 
     builder.CreateRetVoid();
 

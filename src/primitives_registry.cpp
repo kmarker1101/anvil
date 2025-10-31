@@ -216,8 +216,45 @@ void initialize_primitives() {
         emit_fill(builder, data_stack, dsp);
     });
 
-    global_primitives.register_primitive("COMPARE", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+    global_primitives.register_primitive("COMPARE", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto ctx_ptr) {
         emit_compare(builder, data_stack, dsp);
+    });
+
+    // Control flow
+    global_primitives.register_primitive("EXECUTE", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+        emit_execute(builder, data_stack, dsp);
+    });
+
+    // Dictionary lookup
+    global_primitives.register_primitive("FIND", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+        emit_find(builder, data_stack, dsp);
+    });
+
+    // Number parsing
+    global_primitives.register_primitive("NUMBER", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+        emit_number(builder, data_stack, dsp);
+    });
+
+    // Interpreter state
+    global_primitives.register_primitive("[", [](auto& builder, auto data_stack, auto, auto data_space, auto dsp, auto, auto, auto, auto, auto) {
+        emit_left_bracket(builder, data_stack, data_space, dsp);
+    });
+
+    global_primitives.register_primitive("]", [](auto& builder, auto data_stack, auto, auto data_space, auto dsp, auto, auto, auto, auto, auto) {
+        emit_right_bracket(builder, data_stack, data_space, dsp);
+    });
+
+    // Stack reset and error recovery
+    global_primitives.register_primitive("DSP!", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
+        emit_dsp_store(builder, data_stack, dsp);
+    });
+
+    global_primitives.register_primitive("RSP!", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto rsp, auto, auto, auto, auto) {
+        emit_rsp_store(builder, data_stack, dsp, rsp);
+    });
+
+    global_primitives.register_primitive("ABORT", [](auto& builder, auto, auto, auto, auto dsp, auto rsp, auto, auto, auto, auto) {
+        emit_abort(builder, dsp, rsp);
     });
 }
 
