@@ -1152,13 +1152,17 @@ TEST_BOTH_MODES("EXECUTE primitive", "[primitives][execute]", {
     // Define ExecutionContext struct type
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
     ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
     StructType* ctx_type = StructType::create(context, {
         stack_array_type,       // data_stack
         stack_array_type,       // return_stack
         data_space_array_type,  // data_space
+        tib_array_type,         // tib
         builder.getInt64Ty(),   // dsp
         builder.getInt64Ty(),   // rsp
-        builder.getInt64Ty()    // here
+        builder.getInt64Ty(),   // here
+        builder.getInt64Ty(),   // to_in
+        builder.getInt64Ty()    // num_tib
     }, "ExecutionContext");
 
     // Create a helper function that we'll execute
@@ -1183,7 +1187,7 @@ TEST_BOTH_MODES("EXECUTE primitive", "[primitives][execute]", {
 
     Value* helper_ctx_ptr = helper_func->getArg(0);
     Value* helper_data_stack_ptr = builder.CreateStructGEP(ctx_type, helper_ctx_ptr, 0, "data_stack_ptr");
-    Value* helper_dsp_ptr = builder.CreateStructGEP(ctx_type, helper_ctx_ptr, 3, "dsp_ptr");
+    Value* helper_dsp_ptr = builder.CreateStructGEP(ctx_type, helper_ctx_ptr, 4, "dsp_ptr");
 
     // Push literal 10
     emit_lit(builder, helper_data_stack_ptr, helper_dsp_ptr, 10);
@@ -1212,7 +1216,7 @@ TEST_BOTH_MODES("EXECUTE primitive", "[primitives][execute]", {
 
     Value* main_ctx_ptr = main_func->getArg(0);
     Value* main_data_stack_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 0, "data_stack_ptr");
-    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 3, "dsp_ptr");
+    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 4, "dsp_ptr");
 
     // Push initial value 32
     emit_lit(builder, main_data_stack_ptr, main_dsp_ptr, 32);
@@ -1283,13 +1287,17 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
     // Define ExecutionContext struct type
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
     ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
     StructType* ctx_type = StructType::create(context, {
         stack_array_type,       // data_stack
         stack_array_type,       // return_stack
         data_space_array_type,  // data_space
+        tib_array_type,         // tib
         builder.getInt64Ty(),   // dsp
         builder.getInt64Ty(),   // rsp
-        builder.getInt64Ty()    // here
+        builder.getInt64Ty(),   // here
+        builder.getInt64Ty(),   // to_in
+        builder.getInt64Ty()    // num_tib
     }, "ExecutionContext");
 
     Type* ctx_ptr_type = PointerType::get(context, 0);
@@ -1314,7 +1322,7 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
 
     Value* dup_ctx_ptr = dup_func->getArg(0);
     Value* dup_data_stack_ptr = builder.CreateStructGEP(ctx_type, dup_ctx_ptr, 0, "data_stack_ptr");
-    Value* dup_dsp_ptr = builder.CreateStructGEP(ctx_type, dup_ctx_ptr, 3, "dsp_ptr");
+    Value* dup_dsp_ptr = builder.CreateStructGEP(ctx_type, dup_ctx_ptr, 4, "dsp_ptr");
 
     emit_dup(builder, dup_data_stack_ptr, dup_dsp_ptr);
     builder.CreateRetVoid();
@@ -1332,7 +1340,7 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
 
     Value* add_ctx_ptr = add_func->getArg(0);
     Value* add_data_stack_ptr = builder.CreateStructGEP(ctx_type, add_ctx_ptr, 0, "data_stack_ptr");
-    Value* add_dsp_ptr = builder.CreateStructGEP(ctx_type, add_ctx_ptr, 3, "dsp_ptr");
+    Value* add_dsp_ptr = builder.CreateStructGEP(ctx_type, add_ctx_ptr, 4, "dsp_ptr");
 
     emit_add(builder, add_data_stack_ptr, add_dsp_ptr);
     builder.CreateRetVoid();
@@ -1356,7 +1364,7 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
 
     Value* main_ctx_ptr = main_func->getArg(0);
     Value* main_data_stack_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 0, "data_stack_ptr");
-    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 3, "dsp_ptr");
+    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 4, "dsp_ptr");
 
     // Push initial value 5
     emit_lit(builder, main_data_stack_ptr, main_dsp_ptr, 5);
@@ -1455,10 +1463,14 @@ TEST_BOTH_MODES("HERE returns data space address", "[primitives][here]", {
 
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
     ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
     StructType* ctx_type = StructType::create(context, {
         stack_array_type,
         stack_array_type,
         data_space_array_type,
+        tib_array_type,
+        builder.getInt64Ty(),
+        builder.getInt64Ty(),
         builder.getInt64Ty(),
         builder.getInt64Ty(),
         builder.getInt64Ty()
@@ -1466,8 +1478,8 @@ TEST_BOTH_MODES("HERE returns data space address", "[primitives][here]", {
 
     Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
     Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
-    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 5, "here_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 6, "here_ptr");
 
     // Execute HERE primitive
     emit_here(builder, data_stack_ptr, dsp_ptr, data_space_ptr, here_ptr);
@@ -1529,10 +1541,14 @@ TEST_BOTH_MODES("ALLOT advances HERE pointer", "[primitives][allot]", {
 
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
     ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
     StructType* ctx_type = StructType::create(context, {
         stack_array_type,
         stack_array_type,
         data_space_array_type,
+        tib_array_type,
+        builder.getInt64Ty(),
+        builder.getInt64Ty(),
         builder.getInt64Ty(),
         builder.getInt64Ty(),
         builder.getInt64Ty()
@@ -1540,8 +1556,8 @@ TEST_BOTH_MODES("ALLOT advances HERE pointer", "[primitives][allot]", {
 
     Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
     Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
-    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 5, "here_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 6, "here_ptr");
 
     // Push 16 onto stack, then ALLOT
     push_values(builder, data_stack_ptr, dsp_ptr, {16});
@@ -1612,10 +1628,14 @@ TEST_BOTH_MODES("Comma stores value and advances HERE", "[primitives][comma]", {
 
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
     ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
     StructType* ctx_type = StructType::create(context, {
         stack_array_type,
         stack_array_type,
         data_space_array_type,
+        tib_array_type,
+        builder.getInt64Ty(),
+        builder.getInt64Ty(),
         builder.getInt64Ty(),
         builder.getInt64Ty(),
         builder.getInt64Ty()
@@ -1623,8 +1643,8 @@ TEST_BOTH_MODES("Comma stores value and advances HERE", "[primitives][comma]", {
 
     Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
     Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
-    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 5, "here_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 6, "here_ptr");
 
     // Store value 42 using comma
     push_values(builder, data_stack_ptr, dsp_ptr, {42});
@@ -1699,10 +1719,14 @@ TEST_BOTH_MODES("Memory allocation workflow", "[primitives][memory]", {
 
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
     ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
     StructType* ctx_type = StructType::create(context, {
         stack_array_type,
         stack_array_type,
         data_space_array_type,
+        tib_array_type,
+        builder.getInt64Ty(),
+        builder.getInt64Ty(),
         builder.getInt64Ty(),
         builder.getInt64Ty(),
         builder.getInt64Ty()
@@ -1710,8 +1734,8 @@ TEST_BOTH_MODES("Memory allocation workflow", "[primitives][memory]", {
 
     Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
     Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
-    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 5, "here_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 6, "here_ptr");
 
     // Store value 999 at current HERE
     push_values(builder, data_stack_ptr, dsp_ptr, {999});

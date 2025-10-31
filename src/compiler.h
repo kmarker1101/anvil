@@ -44,6 +44,9 @@ private:
     llvm::Value* dsp_ptr_;
     llvm::Value* rsp_ptr_;
     llvm::Value* here_ptr_;
+    llvm::Value* tib_ptr_;
+    llvm::Value* to_in_ptr_;
+    llvm::Value* num_tib_ptr_;
 
     // Stack of loop exit blocks for LEAVE support
     std::vector<llvm::BasicBlock*> loop_exit_stack_;
@@ -58,14 +61,19 @@ private:
             llvm::ArrayType::get(builder_.getInt64Ty(), DATA_STACK_SIZE);
         llvm::ArrayType* data_space_array_type =
             llvm::ArrayType::get(builder_.getInt8Ty(), DATA_SPACE_SIZE);
+        llvm::ArrayType* tib_array_type =
+            llvm::ArrayType::get(builder_.getInt8Ty(), TIB_SIZE);
 
         ctx_type_ = llvm::StructType::create(context_, {
             stack_array_type,       // data_stack
             stack_array_type,       // return_stack
             data_space_array_type,  // data_space
+            tib_array_type,         // tib (Terminal Input Buffer)
             builder_.getInt64Ty(),  // dsp
             builder_.getInt64Ty(),  // rsp
-            builder_.getInt64Ty()   // here
+            builder_.getInt64Ty(),  // here
+            builder_.getInt64Ty(),  // to_in (>IN)
+            builder_.getInt64Ty()   // num_tib (#TIB)
         }, "ExecutionContext");
     }
 
@@ -91,13 +99,16 @@ private:
         llvm::Value* ctx_ptr = func->getArg(0);
 
         // Get pointers to stack arrays and counters
-        // Struct layout: data_stack, return_stack, data_space, dsp, rsp, here
+        // Struct layout: data_stack, return_stack, data_space, tib, dsp, rsp, here, to_in, num_tib
         data_stack_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 0, "data_stack_ptr");
         return_stack_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 1, "return_stack_ptr");
         data_space_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 2, "data_space_ptr");
-        dsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 3, "dsp_ptr");
-        rsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 4, "rsp_ptr");
-        here_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 5, "here_ptr");
+        tib_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 3, "tib_ptr");
+        dsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 4, "dsp_ptr");
+        rsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 5, "rsp_ptr");
+        here_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 6, "here_ptr");
+        to_in_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 7, "to_in_ptr");
+        num_tib_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 8, "num_tib_ptr");
     }
 
     // Compile an AST node to LLVM IR
@@ -187,7 +198,7 @@ private:
         if (prim_fn) {
             // Emit inline IR for primitive
             (*prim_fn)(builder_, data_stack_ptr_, return_stack_ptr_, data_space_ptr_,
-                      dsp_ptr_, rsp_ptr_, here_ptr_);
+                      dsp_ptr_, rsp_ptr_, here_ptr_, tib_ptr_, to_in_ptr_, num_tib_ptr_);
             return;
         }
 

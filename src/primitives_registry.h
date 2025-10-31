@@ -20,7 +20,10 @@ using PrimitiveEmitFn = std::function<void(
     llvm::Value*,            // data_space_ptr
     llvm::Value*,            // dsp_ptr
     llvm::Value*,            // rsp_ptr
-    llvm::Value*             // here_ptr
+    llvm::Value*,            // here_ptr
+    llvm::Value*,            // tib_ptr (Terminal Input Buffer)
+    llvm::Value*,            // to_in_ptr (>IN - parse position)
+    llvm::Value*             // num_tib_ptr (#TIB - buffer length)
 )>;
 
 // Registry of primitive words

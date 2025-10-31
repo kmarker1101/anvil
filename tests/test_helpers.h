@@ -69,21 +69,25 @@ inline ExecutionContext execute_test(
     // Get the ExecutionContext* parameter
     Value* ctx_ptr = func->getArg(0);
 
-    // Define ExecutionContext struct type
+    // Define ExecutionContext struct type (must match stack.h)
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
     ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
     StructType* ctx_type = StructType::create(context, {
         stack_array_type,       // data_stack
         stack_array_type,       // return_stack
         data_space_array_type,  // data_space
+        tib_array_type,         // tib
         builder.getInt64Ty(),   // dsp
         builder.getInt64Ty(),   // rsp
-        builder.getInt64Ty()    // here
+        builder.getInt64Ty(),   // here
+        builder.getInt64Ty(),   // to_in
+        builder.getInt64Ty()    // num_tib
     }, "ExecutionContext");
 
     // Get pointers to data_stack and dsp
     Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
 
     // Call the user-provided emission function
     emit_func(builder, data_stack_ptr, dsp_ptr);
@@ -165,20 +169,27 @@ inline ExecutionContext execute_test_rstack(
     // Get the ExecutionContext* parameter
     Value* ctx_ptr = func->getArg(0);
 
-    // Define ExecutionContext struct type
+    // Define ExecutionContext struct type (must match stack.h)
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
+    ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
     StructType* ctx_type = StructType::create(context, {
-        stack_array_type,      // data_stack
-        stack_array_type,      // return_stack
-        builder.getInt64Ty(),  // dsp
-        builder.getInt64Ty()   // rsp
+        stack_array_type,       // data_stack
+        stack_array_type,       // return_stack
+        data_space_array_type,  // data_space
+        tib_array_type,         // tib
+        builder.getInt64Ty(),   // dsp
+        builder.getInt64Ty(),   // rsp
+        builder.getInt64Ty(),   // here
+        builder.getInt64Ty(),   // to_in
+        builder.getInt64Ty()    // num_tib
     }, "ExecutionContext");
 
     // Get pointers to data_stack, return_stack, dsp, and rsp
     Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
     Value* return_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 1, "return_stack_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
-    Value* rsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "rsp_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
+    Value* rsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 5, "rsp_ptr");
 
     // Call the user-provided emission function
     emit_func(builder, data_stack_ptr, return_stack_ptr, dsp_ptr, rsp_ptr);
@@ -279,21 +290,25 @@ inline ExecutionContext execute_test_mode(
     // Get the ExecutionContext* parameter
     Value* ctx_ptr = func->getArg(0);
 
-    // Define ExecutionContext struct type
+    // Define ExecutionContext struct type (must match stack.h)
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
     ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
     StructType* ctx_type = StructType::create(context, {
         stack_array_type,       // data_stack
         stack_array_type,       // return_stack
         data_space_array_type,  // data_space
+        tib_array_type,         // tib
         builder.getInt64Ty(),   // dsp
         builder.getInt64Ty(),   // rsp
-        builder.getInt64Ty()    // here
+        builder.getInt64Ty(),   // here
+        builder.getInt64Ty(),   // to_in
+        builder.getInt64Ty()    // num_tib
     }, "ExecutionContext");
 
     // Get pointers to data_stack and dsp
     Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
 
     // Call the user-provided emission function
     emit_func(builder, data_stack_ptr, dsp_ptr);
@@ -367,20 +382,24 @@ inline ExecutionContext execute_test_rstack_mode(
     // Define ExecutionContext struct type
     ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
     ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
+    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
     StructType* ctx_type = StructType::create(context, {
         stack_array_type,       // data_stack
         stack_array_type,       // return_stack
         data_space_array_type,  // data_space
+        tib_array_type,         // tib
         builder.getInt64Ty(),   // dsp
         builder.getInt64Ty(),   // rsp
-        builder.getInt64Ty()    // here
+        builder.getInt64Ty(),   // here
+        builder.getInt64Ty(),   // to_in
+        builder.getInt64Ty()    // num_tib
     }, "ExecutionContext");
 
     // Get pointers to all stack components
     Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
     Value* return_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 1, "return_stack_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "dsp_ptr");
-    Value* rsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "rsp_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
+    Value* rsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 5, "rsp_ptr");
 
     // Call the user-provided emission function
     emit_func(builder, data_stack_ptr, return_stack_ptr, dsp_ptr, rsp_ptr);

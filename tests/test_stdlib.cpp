@@ -595,3 +595,93 @@ TEST_CASE("Standard Library - SPACES", "[stdlib][spaces]") {
         REQUIRE(ctx.dsp == 0);
     }
 }
+
+TEST_CASE("Standard Library - COUNT", "[stdlib][count][input]") {
+    SECTION("COUNT extracts length and address from counted string") {
+        // Create a counted string at HERE: length byte + characters
+        // We'll manually set up a counted string for testing
+        auto ctx = execute_with_stdlib(
+            "HERE 5 OVER C! "    // Store length 5 at HERE
+            "72 OVER 1 + C! "    // 'H' at HERE+1
+            "69 OVER 2 + C! "    // 'E' at HERE+2
+            "76 OVER 3 + C! "    // 'L' at HERE+3
+            "76 OVER 4 + C! "    // 'L' at HERE+4
+            "79 OVER 5 + C! "    // 'O' at HERE+5
+            "COUNT"               // Call COUNT
+        );
+        REQUIRE(ctx.dsp == 2);
+        // First element should be original address + 1
+        // Second element should be length (5)
+        REQUIRE(ctx.data_stack[1] == 5);
+    }
+
+    SECTION("COUNT with zero length") {
+        auto ctx = execute_with_stdlib(
+            "HERE 0 OVER C! "  // Store length 0
+            "COUNT"
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[1] == 0);
+    }
+}
+
+TEST_CASE("Standard Library - WORD basics", "[stdlib][word][input]") {
+    SECTION("WORD with prepared input buffer") {
+        // Manually set up TIB with "TEST"
+        auto ctx = execute_with_stdlib(
+            "TIB 84 OVER C! "    // 'T' at TIB[0]
+            "69 OVER 1 + C! "    // 'E' at TIB[1]
+            "83 OVER 2 + C! "    // 'S' at TIB[2]
+            "84 OVER 3 + C! "    // 'T' at TIB[3]
+            "32 OVER 4 + C! "    // space at TIB[4]
+            "DROP "              // Drop TIB address
+            "5 #TIB ! "          // Set buffer length
+            "0 >IN ! "           // Reset parse position
+            "32 WORD "           // Parse space-delimited word
+            "COUNT"              // Get address and length
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[1] == 4);  // Length of "TEST"
+    }
+}
+
+TEST_CASE("Standard Library - Input buffer primitives integration", "[stdlib][input]") {
+    SECTION("TIB returns valid address") {
+        auto ctx = execute_with_stdlib("TIB");
+        REQUIRE(ctx.dsp == 1);
+        // TIB should return address of the buffer
+        REQUIRE(ctx.data_stack[0] != 0);
+    }
+
+    SECTION(">IN returns valid address") {
+        auto ctx = execute_with_stdlib(">IN");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] != 0);
+    }
+
+    SECTION("#TIB returns valid address") {
+        auto ctx = execute_with_stdlib("#TIB");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] != 0);
+    }
+
+    SECTION("SOURCE returns TIB and length") {
+        auto ctx = execute_with_stdlib("SOURCE");
+        REQUIRE(ctx.dsp == 2);
+        // First element should be TIB address
+        // Second element should be #TIB value (initially 0)
+        REQUIRE(ctx.data_stack[0] != 0);
+        REQUIRE(ctx.data_stack[1] == 0);
+    }
+
+    SECTION("Input buffer state manipulation") {
+        auto ctx = execute_with_stdlib(
+            "42 #TIB ! "      // Set #TIB to 42
+            "10 >IN ! "       // Set >IN to 10
+            "#TIB @ >IN @"    // Read both back
+        );
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 42);
+        REQUIRE(ctx.data_stack[1] == 10);
+    }
+}
