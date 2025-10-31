@@ -1,6 +1,8 @@
 : NIP SWAP DROP ;
 : TUCK SWAP OVER ;
 : 2DROP DROP DROP ;
+: 2DUP OVER OVER ;
+: 0= 0 = ;
 : NEGATE -1 * ;
 : ABS ( n -- +n ) DUP 0 < IF NEGATE THEN ;
 : OVER ( x1 x2 -- x1 x2 x1 ) >R DUP R> SWAP ;
@@ -26,6 +28,25 @@ CONSTANT BL 32              \ BL is the space character (ASCII 32)
 \ String helpers
 : COUNT ( c-addr -- c-addr+1 u )
     DUP 1 + SWAP C@ ;    \ Get address+1 and length byte
+
+: MOVE ( addr1 addr2 u -- )
+    >R 2DUP < IF         \ If source < dest, copy backward
+        R> CMOVE>        \ Use CMOVE> for overlapping regions
+    ELSE
+        R> CMOVE         \ Use CMOVE for normal copy
+    THEN ;
+
+: S= ( c-addr1 u1 c-addr2 u2 -- flag )
+    COMPARE 0= ;         \ Compare returns 0 if equal
+
+: BLANK ( c-addr u -- )
+    BL FILL ;            \ Fill with space character
+
+: ERASE ( addr u -- )
+    0 FILL ;             \ Fill with zeros
+
+: PAD ( -- c-addr )
+    HERE 256 + ;         \ PAD is 256 bytes after HERE
 
 \ Input buffer helpers
 : REFILL ( -- flag )

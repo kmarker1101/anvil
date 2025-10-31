@@ -885,20 +885,37 @@ make test
 
 Anvil automatically loads a standard library (`stdlib.fth`) at startup, providing common Forth words built on top of the primitives:
 
-**Currently implemented:**
+**Stack manipulation:**
 - `NIP ( a b -- b )` - Drop second item
 - `TUCK ( a b -- b a b )` - Copy top item under second
 - `2DROP ( a b -- )` - Drop top two items
+- `2DUP ( a b -- a b a b )` - Duplicate top two items
+- `0= ( n -- flag )` - Test if zero
+
+**Arithmetic:**
 - `NEGATE ( n -- -n )` - Negate number
 - `ABS ( n -- +n )` - Absolute value
+
+**Memory operations:**
 - `OVER ( a b -- a b a )` - Copy second item to top
 - `CELLS ( n -- n*8 )` - Convert cell count to byte count
 - `CELL+ ( addr -- addr+8 )` - Add one cell to address
 - `+! ( n addr -- )` - Add to memory location
+
+**Output:**
 - `BL ( -- 32 )` - Push space character code (constant)
 - `SPACE ( -- )` - Output a single space
 - `SPACES ( n -- )` - Output n spaces
+
+**String manipulation:**
 - `COUNT ( c-addr -- c-addr+1 u )` - Convert counted string to address and length
+- `MOVE ( addr1 addr2 u -- )` - Copy u bytes (handles overlapping regions)
+- `S= ( c-addr1 u1 c-addr2 u2 -- flag )` - Compare two strings for equality
+- `BLANK ( c-addr u -- )` - Fill memory region with spaces
+- `ERASE ( addr u -- )` - Fill memory region with zeros
+- `PAD ( -- c-addr )` - Return address of temporary buffer (HERE + 256)
+
+**Input buffer:**
 - `REFILL ( -- flag )` - Read new line into TIB, reset >IN, return true
 - `WORD ( char -- c-addr )` - Parse word delimited by char, return counted string at HERE
 
