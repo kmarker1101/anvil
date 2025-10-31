@@ -6,6 +6,7 @@
 : NEGATE -1 * ;
 : ABS ( n -- +n ) DUP 0 < IF NEGATE THEN ;
 : OVER ( x1 x2 -- x1 x2 x1 ) >R DUP R> SWAP ;
+: / ( n1 n2 -- n3 ) /MOD NIP ;  \ Divide, keep quotient, drop remainder
 
 \ Memory allocation helpers
 \ These are helpers for working with variables and constants

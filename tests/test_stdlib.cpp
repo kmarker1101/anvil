@@ -262,6 +262,100 @@ TEST_CASE("Standard Library - ABS", "[stdlib][abs]") {
     }
 }
 
+TEST_CASE("Standard Library - / (division)", "[stdlib][divide]") {
+    SECTION("Exact division") {
+        auto ctx = execute_with_stdlib("20 4 /");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);
+    }
+
+    SECTION("Division with remainder (truncates)") {
+        auto ctx = execute_with_stdlib("7 2 /");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 3);  // Quotient only, remainder discarded
+    }
+
+    SECTION("Division resulting in 1") {
+        auto ctx = execute_with_stdlib("9 9 /");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1);
+    }
+
+    SECTION("Division with negative dividend") {
+        auto ctx = execute_with_stdlib("-20 4 /");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -5);
+    }
+
+    SECTION("Division with negative divisor") {
+        auto ctx = execute_with_stdlib("20 -4 /");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -5);
+    }
+
+    SECTION("Division with both negative") {
+        auto ctx = execute_with_stdlib("-20 -4 /");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);
+    }
+
+    SECTION("Division by 1") {
+        auto ctx = execute_with_stdlib("42 1 /");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);
+    }
+
+    SECTION("Zero divided by number") {
+        auto ctx = execute_with_stdlib("0 5 /");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("Large division") {
+        auto ctx = execute_with_stdlib("1000 10 /");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 100);
+    }
+
+    SECTION("Division in JIT mode") {
+        auto ctx = execute_with_stdlib("100 5 /", ExecutionMode::JIT);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 20);
+    }
+
+    SECTION("Division in Interpreter mode") {
+        auto ctx = execute_with_stdlib("100 5 /", ExecutionMode::Interpreter);
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 20);
+    }
+
+    SECTION("Multiple divisions") {
+        auto ctx = execute_with_stdlib("100 5 / 2 /");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);  // (100/5)/2 = 20/2 = 10
+    }
+
+    SECTION("Division in expression") {
+        auto ctx = execute_with_stdlib("50 10 / 3 +");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 8);  // (50/10)+3 = 5+3 = 8
+    }
+
+    SECTION("Verify / only returns quotient (not remainder)") {
+        auto ctx = execute_with_stdlib("12 9 /");
+        REQUIRE(ctx.dsp == 1);  // Only one value on stack
+        REQUIRE(ctx.data_stack[0] == 1);  // Quotient (remainder 3 is discarded)
+    }
+
+    SECTION("Compare / vs /MOD behavior") {
+        auto ctx = execute_with_stdlib("17 5 / 17 5 /MOD");
+        REQUIRE(ctx.dsp == 3);  // / leaves 1 value, /MOD leaves 2 values
+        REQUIRE(ctx.data_stack[0] == 3);  // / result (quotient)
+        REQUIRE(ctx.data_stack[1] == 2);  // /MOD remainder
+        REQUIRE(ctx.data_stack[2] == 3);  // /MOD quotient
+    }
+}
+
 TEST_CASE("Standard Library - OVER", "[stdlib][over]") {
     SECTION("OVER copies second to top") {
         auto ctx = execute_with_stdlib("10 20 OVER");
