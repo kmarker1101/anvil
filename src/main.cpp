@@ -275,7 +275,17 @@ bool execute_line(const std::string& line, ReplState& state) {
             }
 
             // Execute with current context
-            engine->execute(func, &state.ctx);
+            try {
+                engine->execute(func, &state.ctx);
+            } catch (const std::exception& exec_error) {
+                delete engine;
+                // Runtime error during execution - reset stacks
+                std::cout << "\n";
+                std::cerr << "Runtime error: " << exec_error.what() << "\n";
+                state.ctx.dsp = 0;
+                state.ctx.rsp = 0;
+                return true;
+            }
 
             delete engine;
 
@@ -284,12 +294,9 @@ bool execute_line(const std::string& line, ReplState& state) {
         }
 
     } catch (const std::exception& e) {
-        // Don't use cursor positioning on error - just print error normally
+        // Compilation error - don't clear stack (user's previous values still valid)
         std::cout << "\n";  // Move to new line first
         std::cerr << "Error: " << e.what() << "\n";
-        // Reset stacks to recover from error
-        state.ctx.dsp = 0;
-        state.ctx.rsp = 0;
 
         // Clean up any partially-created __main functions from the module
         std::vector<llvm::Function*> to_remove;
@@ -706,13 +713,11 @@ int main(int argc, char** argv) {
             add_history(line.c_str());
         }
 
-        // Handle special REPL commands
+        // Handle special REPL commands (don't echo or use cursor positioning)
         if (line == ".s") {
-            std::cout << line << "\n";
             print_stack(state.ctx);
             continue;
         } else if (line == "help") {
-            std::cout << line << "\n";
             std::cout << "REPL commands:\n";
             std::cout << "  .s          Show stack\n";
             std::cout << "  quit        Exit\n";
