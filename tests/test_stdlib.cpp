@@ -685,3 +685,130 @@ TEST_CASE("Standard Library - Input buffer primitives integration", "[stdlib][in
         REQUIRE(ctx.data_stack[1] == 10);
     }
 }
+
+TEST_CASE("Standard Library - String words", "[stdlib][strings]") {
+    SECTION("COUNT extracts length and data from counted string") {
+        auto ctx = execute_with_stdlib(
+            "HERE DUP "          // Get buffer address, keep copy
+            "5 OVER C! "         // Store length byte = 5
+            "72 OVER 1 + C! "    // Store 'H'
+            "69 OVER 2 + C! "    // Store 'E'
+            "76 OVER 3 + C! "    // Store 'L'
+            "76 OVER 4 + C! "    // Store 'L'
+            "79 OVER 5 + C! "    // Store 'O'
+            "COUNT "             // ( c-addr -- c-addr+1 u )
+        );
+        REQUIRE(ctx.dsp == 3);
+        // Stack should have: original-addr, data-addr, length
+        int64_t orig_addr = ctx.data_stack[0];
+        int64_t data_addr = ctx.data_stack[1];
+        int64_t length = ctx.data_stack[2];
+
+        REQUIRE(data_addr == orig_addr + 1);  // Points past length byte
+        REQUIRE(length == 5);                  // Length is 5
+    }
+
+    SECTION("MOVE copies non-overlapping memory") {
+        auto ctx = execute_with_stdlib(
+            "HERE DUP "          // Get two copies of HERE
+            "72 OVER C! "        // Store 'H' at offset 0
+            "73 OVER 1 + C! "    // Store 'I' at offset 1
+            "OVER 100 + "        // Calculate dest = HERE + 100
+            "2 "                 // Count = 2
+            "MOVE "              // Copy 2 bytes
+            "HERE 100 + C@ "     // Read first byte from dest
+            "HERE 101 + C@"      // Read second byte from dest
+        );
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[1] == 72);  // 'H'
+        REQUIRE(ctx.data_stack[2] == 73);  // 'I'
+    }
+
+    SECTION("MOVE handles overlapping regions correctly") {
+        auto ctx = execute_with_stdlib(
+            "HERE "
+            "65 OVER C! "        // Store 'A' at offset 0
+            "66 OVER 1 + C! "    // Store 'B' at offset 1
+            "67 OVER 2 + C! "    // Store 'C' at offset 2
+            "DUP 1 + "           // dest = HERE + 1 (overlapping!)
+            "3 "                 // Count = 3
+            "MOVE "              // Should use CMOVE> automatically
+            "HERE 1 + C@ "       // Read offset 1
+            "HERE 2 + C@ "       // Read offset 2
+            "HERE 3 + C@"        // Read offset 3
+        );
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 65);  // 'A' copied to offset 1
+        REQUIRE(ctx.data_stack[1] == 66);  // 'B' copied to offset 2
+        REQUIRE(ctx.data_stack[2] == 67);  // 'C' copied to offset 3
+    }
+
+    SECTION("S= returns true for equal strings") {
+        auto ctx = execute_with_stdlib(
+            "HERE "
+            "84 OVER C! "        // Store 'T'
+            "69 OVER 1 + C! "    // Store 'E'
+            "83 OVER 2 + C! "    // Store 'S'
+            "3 "                 // len1
+            "2DUP "              // Duplicate addr, len
+            "S="                 // Compare identical strings
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -1);  // True in Forth
+    }
+
+    SECTION("S= returns false for different strings") {
+        auto ctx = execute_with_stdlib(
+            "HERE "
+            "65 OVER C! "        // Store 'A'
+            "66 OVER 1 + C! "    // Store 'B'
+            "1 "                 // addr, len1 = 1
+            "OVER 1 + 1 "        // addr2 (offset by 1), len2 = 1
+            "S="                 // Compare 'A' vs 'B'
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);   // False
+    }
+
+    SECTION("BLANK fills memory with spaces") {
+        auto ctx = execute_with_stdlib(
+            "HERE "
+            "0 OVER C! "         // Store 0
+            "0 OVER 1 + C! "     // Store 0
+            "0 OVER 2 + C! "     // Store 0
+            "DUP 3 BLANK "       // Fill 3 bytes with spaces
+            "HERE C@ "           // Read first byte
+            "HERE 1 + C@ "       // Read second byte
+            "HERE 2 + C@"        // Read third byte
+        );
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[1] == 32);  // Space
+        REQUIRE(ctx.data_stack[2] == 32);  // Space
+        REQUIRE(ctx.data_stack[3] == 32);  // Space
+    }
+
+    SECTION("ERASE fills memory with zeros") {
+        auto ctx = execute_with_stdlib(
+            "HERE "
+            "255 OVER C! "       // Store 255
+            "255 OVER 1 + C! "   // Store 255
+            "255 OVER 2 + C! "   // Store 255
+            "DUP 3 ERASE "       // Fill 3 bytes with zeros
+            "HERE C@ "           // Read first byte
+            "HERE 1 + C@ "       // Read second byte
+            "HERE 2 + C@"        // Read third byte
+        );
+        REQUIRE(ctx.dsp == 4);
+        REQUIRE(ctx.data_stack[1] == 0);   // Zero
+        REQUIRE(ctx.data_stack[2] == 0);   // Zero
+        REQUIRE(ctx.data_stack[3] == 0);   // Zero
+    }
+
+    SECTION("PAD returns address 256 bytes after HERE") {
+        auto ctx = execute_with_stdlib(
+            "HERE PAD SWAP -"    // PAD - HERE should be 256
+        );
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 256);
+    }
+}
