@@ -20,6 +20,7 @@
 #include "primitives.h"
 #include "primitives_registry.h"
 #include "stack.h"
+#include "execution_context_layout.h"
 
 namespace anvil {
 
@@ -57,24 +58,7 @@ private:
 
     // Initialize ExecutionContext struct type
     void init_context_type() {
-        llvm::ArrayType* stack_array_type =
-            llvm::ArrayType::get(builder_.getInt64Ty(), DATA_STACK_SIZE);
-        llvm::ArrayType* data_space_array_type =
-            llvm::ArrayType::get(builder_.getInt8Ty(), DATA_SPACE_SIZE);
-        llvm::ArrayType* tib_array_type =
-            llvm::ArrayType::get(builder_.getInt8Ty(), TIB_SIZE);
-
-        ctx_type_ = llvm::StructType::create(context_, {
-            stack_array_type,       // data_stack
-            stack_array_type,       // return_stack
-            data_space_array_type,  // data_space
-            tib_array_type,         // tib (Terminal Input Buffer)
-            builder_.getInt64Ty(),  // dsp
-            builder_.getInt64Ty(),  // rsp
-            builder_.getInt64Ty(),  // here
-            builder_.getInt64Ty(),  // to_in (>IN)
-            builder_.getInt64Ty()   // num_tib (#TIB)
-        }, "ExecutionContext");
+        ctx_type_ = create_execution_context_type(builder_, context_);
     }
 
     // Create a function with signature: void func(ExecutionContext*)
@@ -98,17 +82,16 @@ private:
     void setup_stack_pointers(llvm::Function* func) {
         llvm::Value* ctx_ptr = func->getArg(0);
 
-        // Get pointers to stack arrays and counters
-        // Struct layout: data_stack, return_stack, data_space, tib, dsp, rsp, here, to_in, num_tib
-        data_stack_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 0, "data_stack_ptr");
-        return_stack_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 1, "return_stack_ptr");
-        data_space_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 2, "data_space_ptr");
-        tib_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 3, "tib_ptr");
-        dsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 4, "dsp_ptr");
-        rsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 5, "rsp_ptr");
-        here_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 6, "here_ptr");
-        to_in_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 7, "to_in_ptr");
-        num_tib_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, 8, "num_tib_ptr");
+        // Get pointers to stack arrays and counters using centralized field indices
+        data_stack_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, CTX_DATA_STACK, "data_stack_ptr");
+        return_stack_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, CTX_RETURN_STACK, "return_stack_ptr");
+        data_space_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, CTX_DATA_SPACE, "data_space_ptr");
+        tib_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, CTX_TIB, "tib_ptr");
+        dsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, CTX_DSP, "dsp_ptr");
+        rsp_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, CTX_RSP, "rsp_ptr");
+        here_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, CTX_HERE, "here_ptr");
+        to_in_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, CTX_TO_IN, "to_in_ptr");
+        num_tib_ptr_ = builder_.CreateStructGEP(ctx_type_, ctx_ptr, CTX_NUM_TIB, "num_tib_ptr");
     }
 
     // Compile an AST node to LLVM IR

@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include "test_helpers.h"
 #include "primitives.h"
+#include "execution_context_layout.h"
 
 using namespace anvil;
 using namespace anvil::test;
@@ -521,6 +522,54 @@ TEST_BOTH_MODES("< primitive - negative numbers", "[primitives][comparison][lt]"
     });
 
     // Check result: -10 < -5 = true (-1)
+    REQUIRE(ctx.dsp == 1);
+    REQUIRE(ctx.data_stack[0] == -1);
+})
+
+TEST_BOTH_MODES("= primitive - equal values", "[primitives][comparison][eq]", {
+    auto ctx = execute_test_mode("test_eq_true", mode, [](llvm::IRBuilder<>& builder,
+                                                   llvm::Value* data_stack_ptr,
+                                                   llvm::Value* dsp_ptr) {
+        // Push 42 and 42 onto the stack
+        push_values(builder, data_stack_ptr, dsp_ptr, {42, 42});
+
+        // Execute = primitive
+        emit_eq(builder, data_stack_ptr, dsp_ptr);
+    });
+
+    // Check result: 42 = 42 = true (-1)
+    REQUIRE(ctx.dsp == 1);
+    REQUIRE(ctx.data_stack[0] == -1);
+})
+
+TEST_BOTH_MODES("= primitive - unequal values", "[primitives][comparison][eq]", {
+    auto ctx = execute_test_mode("test_eq_false", mode, [](llvm::IRBuilder<>& builder,
+                                                    llvm::Value* data_stack_ptr,
+                                                    llvm::Value* dsp_ptr) {
+        // Push 10 and 20 onto the stack
+        push_values(builder, data_stack_ptr, dsp_ptr, {10, 20});
+
+        // Execute = primitive
+        emit_eq(builder, data_stack_ptr, dsp_ptr);
+    });
+
+    // Check result: 10 = 20 = false (0)
+    REQUIRE(ctx.dsp == 1);
+    REQUIRE(ctx.data_stack[0] == 0);
+})
+
+TEST_BOTH_MODES("= primitive - zero values", "[primitives][comparison][eq]", {
+    auto ctx = execute_test_mode("test_eq_zero", mode, [](llvm::IRBuilder<>& builder,
+                                                   llvm::Value* data_stack_ptr,
+                                                   llvm::Value* dsp_ptr) {
+        // Push 0 and 0 onto the stack
+        push_values(builder, data_stack_ptr, dsp_ptr, {0, 0});
+
+        // Execute = primitive
+        emit_eq(builder, data_stack_ptr, dsp_ptr);
+    });
+
+    // Check result: 0 = 0 = true (-1)
     REQUIRE(ctx.dsp == 1);
     REQUIRE(ctx.data_stack[0] == -1);
 })
@@ -1149,21 +1198,8 @@ TEST_BOTH_MODES("EXECUTE primitive", "[primitives][execute]", {
     auto module = std::make_unique<Module>("test_execute", context);
     IRBuilder<> builder(context);
 
-    // Define ExecutionContext struct type
-    ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
-    ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
-    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
-    StructType* ctx_type = StructType::create(context, {
-        stack_array_type,       // data_stack
-        stack_array_type,       // return_stack
-        data_space_array_type,  // data_space
-        tib_array_type,         // tib
-        builder.getInt64Ty(),   // dsp
-        builder.getInt64Ty(),   // rsp
-        builder.getInt64Ty(),   // here
-        builder.getInt64Ty(),   // to_in
-        builder.getInt64Ty()    // num_tib
-    }, "ExecutionContext");
+    // Define ExecutionContext struct type using centralized definition
+    StructType* ctx_type = create_execution_context_type(builder, context);
 
     // Create a helper function that we'll execute
     // This function adds 10 to the top of the stack
@@ -1186,8 +1222,8 @@ TEST_BOTH_MODES("EXECUTE primitive", "[primitives][execute]", {
     builder.SetInsertPoint(helper_entry);
 
     Value* helper_ctx_ptr = helper_func->getArg(0);
-    Value* helper_data_stack_ptr = builder.CreateStructGEP(ctx_type, helper_ctx_ptr, 0, "data_stack_ptr");
-    Value* helper_dsp_ptr = builder.CreateStructGEP(ctx_type, helper_ctx_ptr, 4, "dsp_ptr");
+    Value* helper_data_stack_ptr = builder.CreateStructGEP(ctx_type, helper_ctx_ptr, CTX_DATA_STACK, "data_stack_ptr");
+    Value* helper_dsp_ptr = builder.CreateStructGEP(ctx_type, helper_ctx_ptr, CTX_DSP, "dsp_ptr");
 
     // Push literal 10
     emit_lit(builder, helper_data_stack_ptr, helper_dsp_ptr, 10);
@@ -1215,8 +1251,8 @@ TEST_BOTH_MODES("EXECUTE primitive", "[primitives][execute]", {
     builder.SetInsertPoint(main_entry);
 
     Value* main_ctx_ptr = main_func->getArg(0);
-    Value* main_data_stack_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 0, "data_stack_ptr");
-    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 4, "dsp_ptr");
+    Value* main_data_stack_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, CTX_DATA_STACK, "data_stack_ptr");
+    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, CTX_DSP, "dsp_ptr");
 
     // Push initial value 32
     emit_lit(builder, main_data_stack_ptr, main_dsp_ptr, 32);
@@ -1284,21 +1320,8 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
     auto module = std::make_unique<Module>("test_execute_multiple", context);
     IRBuilder<> builder(context);
 
-    // Define ExecutionContext struct type
-    ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
-    ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
-    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
-    StructType* ctx_type = StructType::create(context, {
-        stack_array_type,       // data_stack
-        stack_array_type,       // return_stack
-        data_space_array_type,  // data_space
-        tib_array_type,         // tib
-        builder.getInt64Ty(),   // dsp
-        builder.getInt64Ty(),   // rsp
-        builder.getInt64Ty(),   // here
-        builder.getInt64Ty(),   // to_in
-        builder.getInt64Ty()    // num_tib
-    }, "ExecutionContext");
+    // Define ExecutionContext struct type using centralized definition
+    StructType* ctx_type = create_execution_context_type(builder, context);
 
     Type* ctx_ptr_type = PointerType::get(context, 0);
 
@@ -1321,8 +1344,8 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
     builder.SetInsertPoint(dup_entry);
 
     Value* dup_ctx_ptr = dup_func->getArg(0);
-    Value* dup_data_stack_ptr = builder.CreateStructGEP(ctx_type, dup_ctx_ptr, 0, "data_stack_ptr");
-    Value* dup_dsp_ptr = builder.CreateStructGEP(ctx_type, dup_ctx_ptr, 4, "dsp_ptr");
+    Value* dup_data_stack_ptr = builder.CreateStructGEP(ctx_type, dup_ctx_ptr, CTX_DATA_STACK, "data_stack_ptr");
+    Value* dup_dsp_ptr = builder.CreateStructGEP(ctx_type, dup_ctx_ptr, CTX_DSP, "dsp_ptr");
 
     emit_dup(builder, dup_data_stack_ptr, dup_dsp_ptr);
     builder.CreateRetVoid();
@@ -1339,8 +1362,8 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
     builder.SetInsertPoint(add_entry);
 
     Value* add_ctx_ptr = add_func->getArg(0);
-    Value* add_data_stack_ptr = builder.CreateStructGEP(ctx_type, add_ctx_ptr, 0, "data_stack_ptr");
-    Value* add_dsp_ptr = builder.CreateStructGEP(ctx_type, add_ctx_ptr, 4, "dsp_ptr");
+    Value* add_data_stack_ptr = builder.CreateStructGEP(ctx_type, add_ctx_ptr, CTX_DATA_STACK, "data_stack_ptr");
+    Value* add_dsp_ptr = builder.CreateStructGEP(ctx_type, add_ctx_ptr, CTX_DSP, "dsp_ptr");
 
     emit_add(builder, add_data_stack_ptr, add_dsp_ptr);
     builder.CreateRetVoid();
@@ -1363,8 +1386,8 @@ TEST_BOTH_MODES("EXECUTE with multiple calls", "[primitives][execute]", {
     builder.SetInsertPoint(main_entry);
 
     Value* main_ctx_ptr = main_func->getArg(0);
-    Value* main_data_stack_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 0, "data_stack_ptr");
-    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, 4, "dsp_ptr");
+    Value* main_data_stack_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, CTX_DATA_STACK, "data_stack_ptr");
+    Value* main_dsp_ptr = builder.CreateStructGEP(ctx_type, main_ctx_ptr, CTX_DSP, "dsp_ptr");
 
     // Push initial value 5
     emit_lit(builder, main_data_stack_ptr, main_dsp_ptr, 5);
@@ -1476,10 +1499,10 @@ TEST_BOTH_MODES("HERE returns data space address", "[primitives][here]", {
         builder.getInt64Ty()
     }, "ExecutionContext");
 
-    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
-    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
-    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 6, "here_ptr");
+    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DATA_STACK, "data_stack_ptr");
+    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DATA_SPACE, "data_space_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DSP, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_HERE, "here_ptr");
 
     // Execute HERE primitive
     emit_here(builder, data_stack_ptr, dsp_ptr, data_space_ptr, here_ptr);
@@ -1554,10 +1577,10 @@ TEST_BOTH_MODES("ALLOT advances HERE pointer", "[primitives][allot]", {
         builder.getInt64Ty()
     }, "ExecutionContext");
 
-    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
-    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
-    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 6, "here_ptr");
+    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DATA_STACK, "data_stack_ptr");
+    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DATA_SPACE, "data_space_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DSP, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_HERE, "here_ptr");
 
     // Push 16 onto stack, then ALLOT
     push_values(builder, data_stack_ptr, dsp_ptr, {16});
@@ -1641,10 +1664,10 @@ TEST_BOTH_MODES("Comma stores value and advances HERE", "[primitives][comma]", {
         builder.getInt64Ty()
     }, "ExecutionContext");
 
-    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
-    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
-    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 6, "here_ptr");
+    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DATA_STACK, "data_stack_ptr");
+    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DATA_SPACE, "data_space_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DSP, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_HERE, "here_ptr");
 
     // Store value 42 using comma
     push_values(builder, data_stack_ptr, dsp_ptr, {42});
@@ -1732,10 +1755,10 @@ TEST_BOTH_MODES("Memory allocation workflow", "[primitives][memory]", {
         builder.getInt64Ty()
     }, "ExecutionContext");
 
-    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
-    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 2, "data_space_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
-    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 6, "here_ptr");
+    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DATA_STACK, "data_stack_ptr");
+    Value* data_space_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DATA_SPACE, "data_space_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DSP, "dsp_ptr");
+    Value* here_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_HERE, "here_ptr");
 
     // Store value 999 at current HERE
     push_values(builder, data_stack_ptr, dsp_ptr, {999});
@@ -1785,3 +1808,71 @@ TEST_BOTH_MODES("Memory allocation workflow", "[primitives][memory]", {
     REQUIRE(data_as_cells[0] == 999);
     REQUIRE(data_as_cells[13] == 777);  // (8 + 96) / 8 = 13
 })
+
+// Loop counter tests
+TEST_BOTH_MODES("I primitive returns loop counter", "[primitives][loops][i]", {
+    auto ctx = execute_test_rstack_mode("test_i", mode,
+                                    [](llvm::IRBuilder<>& builder,
+                                       llvm::Value* data_stack_ptr,
+                                       llvm::Value* return_stack_ptr,
+                                       llvm::Value* dsp_ptr,
+                                       llvm::Value* rsp_ptr) {
+        // Setup: Push loop counter onto return stack (simulating DO)
+        // DO pushes limit and index: >R >R
+        // For a loop "5 0 DO", return stack has: index(0) limit(5)
+
+        // Push limit (5) onto data stack, then move to return stack
+        push_values(builder, data_stack_ptr, dsp_ptr, {5});
+        emit_to_r(builder, data_stack_ptr, return_stack_ptr, dsp_ptr, rsp_ptr);
+
+        // Push index (3) onto data stack, then move to return stack
+        push_values(builder, data_stack_ptr, dsp_ptr, {3});
+        emit_to_r(builder, data_stack_ptr, return_stack_ptr, dsp_ptr, rsp_ptr);
+
+        // Now call I - should return current index (3)
+        emit_i(builder, data_stack_ptr, return_stack_ptr, dsp_ptr, rsp_ptr);
+    });
+
+    // I should have returned the loop index (3)
+    REQUIRE(ctx.dsp == 1);
+    REQUIRE(ctx.data_stack[0] == 3);
+    REQUIRE(ctx.rsp == 2);  // Return stack still has limit and index
+})
+
+TEST_BOTH_MODES("J primitive returns outer loop counter", "[primitives][loops][j]", {
+    auto ctx = execute_test_rstack_mode("test_j", mode,
+                                    [](llvm::IRBuilder<>& builder,
+                                       llvm::Value* data_stack_ptr,
+                                       llvm::Value* return_stack_ptr,
+                                       llvm::Value* dsp_ptr,
+                                       llvm::Value* rsp_ptr) {
+        // Setup nested loops: outer "3 0 DO" and inner "5 0 DO"
+        // Return stack layout (bottom to top):
+        // outer_limit(3), outer_index(1), inner_limit(5), inner_index(2)
+
+        // Push outer loop: limit=3, index=1
+        push_values(builder, data_stack_ptr, dsp_ptr, {3});
+        emit_to_r(builder, data_stack_ptr, return_stack_ptr, dsp_ptr, rsp_ptr);
+        push_values(builder, data_stack_ptr, dsp_ptr, {1});
+        emit_to_r(builder, data_stack_ptr, return_stack_ptr, dsp_ptr, rsp_ptr);
+
+        // Push inner loop: limit=5, index=2
+        push_values(builder, data_stack_ptr, dsp_ptr, {5});
+        emit_to_r(builder, data_stack_ptr, return_stack_ptr, dsp_ptr, rsp_ptr);
+        push_values(builder, data_stack_ptr, dsp_ptr, {2});
+        emit_to_r(builder, data_stack_ptr, return_stack_ptr, dsp_ptr, rsp_ptr);
+
+        // J should return outer loop index (1)
+        emit_j(builder, data_stack_ptr, return_stack_ptr, dsp_ptr, rsp_ptr);
+    });
+
+    // J should have returned the outer loop index (1)
+    REQUIRE(ctx.dsp == 1);
+    REQUIRE(ctx.data_stack[0] == 1);
+    REQUIRE(ctx.rsp == 4);  // Return stack still has all loop data
+})
+
+// Note: . (dot) and TYPE tests are difficult to write as unit tests
+// because they produce output to stdout. They are tested indirectly
+// through integration tests and manual testing.
+// EMIT is similarly tested in test_emit.cpp with output capture.

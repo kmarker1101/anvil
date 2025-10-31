@@ -2,6 +2,7 @@
 #include "test_helpers.h"
 #include "primitives.h"
 #include "stack.h"
+#include "execution_context_layout.h"
 
 using namespace anvil;
 using namespace anvil::test;
@@ -40,28 +41,15 @@ inline ExecutionContext execute_test_input_mode(
 
     Value* ctx_ptr = func->getArg(0);
 
-    // Define ExecutionContext struct type
-    ArrayType* stack_array_type = ArrayType::get(builder.getInt64Ty(), DATA_STACK_SIZE);
-    ArrayType* data_space_array_type = ArrayType::get(builder.getInt8Ty(), DATA_SPACE_SIZE);
-    ArrayType* tib_array_type = ArrayType::get(builder.getInt8Ty(), TIB_SIZE);
-    StructType* ctx_type = StructType::create(context, {
-        stack_array_type,       // 0: data_stack
-        stack_array_type,       // 1: return_stack
-        data_space_array_type,  // 2: data_space
-        tib_array_type,         // 3: tib
-        builder.getInt64Ty(),   // 4: dsp
-        builder.getInt64Ty(),   // 5: rsp
-        builder.getInt64Ty(),   // 6: here
-        builder.getInt64Ty(),   // 7: to_in
-        builder.getInt64Ty()    // 8: num_tib
-    }, "ExecutionContext");
+    // Define ExecutionContext struct type using centralized definition
+    StructType* ctx_type = create_execution_context_type(builder, context);
 
     // Get pointers to all fields
-    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 0, "data_stack_ptr");
-    Value* tib_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 3, "tib_ptr");
-    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 4, "dsp_ptr");
-    Value* to_in_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 7, "to_in_ptr");
-    Value* num_tib_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, 8, "num_tib_ptr");
+    Value* data_stack_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DATA_STACK, "data_stack_ptr");
+    Value* tib_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_TIB, "tib_ptr");
+    Value* dsp_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_DSP, "dsp_ptr");
+    Value* to_in_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_TO_IN, "to_in_ptr");
+    Value* num_tib_ptr = builder.CreateStructGEP(ctx_type, ctx_ptr, CTX_NUM_TIB, "num_tib_ptr");
 
     // Call the user-provided emission function
     emit_func(builder, data_stack_ptr, tib_ptr, dsp_ptr, to_in_ptr, num_tib_ptr, ctx_ptr);
