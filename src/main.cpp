@@ -48,9 +48,10 @@ struct ReplState {
     llvm::LLVMContext llvm_ctx;
     std::unique_ptr<llvm::Module> module;
     int module_counter;
+    size_t compile_time_here;  // Track data space allocation across REPL lines
 
     ReplState(ExecutionMode m)
-        : mode(m), module_counter(0) {
+        : mode(m), module_counter(0), compile_time_here(0) {
         // Initialize stacks
         ctx.dsp = 0;
         ctx.rsp = 0;
@@ -239,8 +240,12 @@ bool execute_line(const std::string& line, ReplState& state) {
         }
 
         // Use the shared module so all definitions are in the same module
-        Compiler compiler(state.llvm_ctx, *state.module);
+        // Pass persistent compile_time_here so VARIABLEs get unique offsets
+        Compiler compiler(state.llvm_ctx, *state.module, state.compile_time_here);
         llvm::Function* func = compiler.compile(ast.get());
+
+        // Update persistent compile_time_here after compilation
+        state.compile_time_here = compiler.get_compile_time_here();
 
         if (!func) {
             std::cerr << "Compilation error\n";

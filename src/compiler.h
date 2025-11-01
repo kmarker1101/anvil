@@ -221,12 +221,21 @@ private:
         const DictionaryEntry* entry = global_dictionary.find_word(node->word_name);
 
         if (entry) {
-            // If the word has an LLVM function, emit a direct call
-            if (entry->llvm_func) {
+            // Look up the function in the current module by name
+            // This ensures we call the right function even when modules are cloned
+            llvm::Function* func = module_.getFunction(node->word_name);
+
+            if (func) {
+                // Direct call to the function in the current module
+                llvm::Value* ctx_ptr = current_function_->getArg(0);
+                builder_.CreateCall(func, {ctx_ptr});
+            } else if (entry->llvm_func) {
+                // Fallback: use the cached function pointer if not in current module
+                // This handles cases where the function hasn't been cloned yet
                 llvm::Value* ctx_ptr = current_function_->getArg(0);
                 builder_.CreateCall(entry->llvm_func, {ctx_ptr});
             } else {
-                // Fallback: use EXECUTE for words without LLVM functions
+                // Final fallback: use EXECUTE for words without LLVM functions
                 // (This shouldn't happen in normal compilation but keeps compatibility)
                 llvm::Value* xt_int = builder_.getInt64(
                     reinterpret_cast<int64_t>(entry->xt)
@@ -842,7 +851,7 @@ private:
     }
 
 public:
-    Compiler(llvm::LLVMContext& context, llvm::Module& module)
+    Compiler(llvm::LLVMContext& context, llvm::Module& module, size_t initial_here = 0)
         : context_(context),
           module_(module),
           builder_(context),
@@ -854,8 +863,13 @@ public:
           dsp_ptr_(nullptr),
           rsp_ptr_(nullptr),
           here_ptr_(nullptr),
-          compile_time_here_(0) {
+          compile_time_here_(initial_here) {
         init_context_type();
+    }
+
+    // Get current compile-time HERE value (for persistent REPL state)
+    size_t get_compile_time_here() const {
+        return compile_time_here_;
     }
 
     // Compile an AST tree
