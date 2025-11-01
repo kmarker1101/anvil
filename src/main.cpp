@@ -82,7 +82,8 @@ void print_stack(const ExecutionContext& ctx) {
 }
 
 // Execute a line of Forth code
-bool execute_line(const std::string& line, ReplState& state) {
+// If suppress_ok is true, don't print "ok" after successful execution
+bool execute_line(const std::string& line, ReplState& state, bool suppress_ok = false) {
     if (line.empty()) {
         return true; // Empty line
     }
@@ -202,7 +203,7 @@ bool execute_line(const std::string& line, ReplState& state) {
 
                     if (is_definition) {
                         // Definition was added to dictionary
-                        std::cout << "ok\n";
+                        if (!suppress_ok) std::cout << "ok\n";
                     } else {
                         // Execute the code
                         auto module_clone = llvm::CloneModule(*state.module);
@@ -218,7 +219,7 @@ bool execute_line(const std::string& line, ReplState& state) {
 
                         engine->execute(func, &state.ctx);
                         delete engine;
-                        std::cout << "ok\n";
+                        if (!suppress_ok) std::cout << "ok\n";
                     }
 
                     return true;
@@ -260,7 +261,7 @@ bool execute_line(const std::string& line, ReplState& state) {
 
         if (is_definition) {
             // Definition was added to dictionary, no need to execute
-            std::cout << "ok\n";
+            if (!suppress_ok) std::cout << "ok\n";
         } else {
             // Regular code - create execution engine and run
             // Note: We can't move the module since we need it for future definitions
@@ -292,7 +293,7 @@ bool execute_line(const std::string& line, ReplState& state) {
             delete engine;
 
             // Print " ok" after execution (space ensures separation from any output)
-            std::cout << " ok\n";
+            if (!suppress_ok) std::cout << " ok\n";
         }
 
     } catch (const std::exception& e) {
@@ -599,7 +600,9 @@ void print_usage(const char* program_name) {
     std::cout << "  quit, exit, bye   Exit the REPL\n";
     std::cout << "  help              Show help\n\n";
     std::cout << "Examples:\n";
-    std::cout << "  " << program_name << "                    # Start interactive REPL\n";
+    std::cout << "  " << program_name << "                    # Start interactive REPL (JIT mode)\n";
+    std::cout << "  " << program_name << " prog.fth              # Run prog.fth using JIT\n";
+    std::cout << "  " << program_name << " --no-jit prog.fth     # Run prog.fth using interpreter\n";
     std::cout << "  " << program_name << " --compile prog.fth     # Compile to a.out\n";
     std::cout << "  " << program_name << " --compile prog.fth -o prog  # Compile to prog\n\n";
 }
@@ -636,10 +639,20 @@ int main(int argc, char** argv) {
         } else if (std::strcmp(argv[i], "--help") == 0 || std::strcmp(argv[i], "-h") == 0) {
             print_usage(argv[0]);
             return 0;
-        } else {
+        } else if (argv[i][0] == '-') {
+            // Unknown option
             std::cerr << "Unknown option: " << argv[i] << "\n\n";
             print_usage(argv[0]);
             return 1;
+        } else {
+            // No dash prefix - treat as input file
+            if (input_file.empty()) {
+                input_file = argv[i];
+            } else {
+                std::cerr << "Error: multiple input files specified\n\n";
+                print_usage(argv[0]);
+                return 1;
+            }
         }
     }
 
@@ -658,11 +671,6 @@ int main(int argc, char** argv) {
     if (mode == ExecutionMode::Interpreter) {
         setvbuf(stdout, NULL, _IONBF, 0);
     }
-
-    // Print banner
-    std::cout << "Anvil Forth Compiler (LLVM " << LLVM_VERSION_STRING << ")\n";
-    std::cout << "Mode: " << (mode == ExecutionMode::JIT ? "JIT" : "Interpreter") << "\n";
-    std::cout << "Type help for help, quit to exit\n";
 
     // Create REPL state
     ReplState state(mode);
@@ -689,6 +697,30 @@ int main(int argc, char** argv) {
         std::cout.rdbuf(old_cout);
     }
     // If stdlib doesn't exist, continue without it
+
+    // If input file specified, execute it and exit (no REPL)
+    if (!input_file.empty()) {
+        std::ifstream file(input_file);
+        if (!file.is_open()) {
+            std::cerr << "Error: Could not open file: " << input_file << "\n";
+            return 1;
+        }
+
+        std::stringstream buffer;
+        buffer << file.rdbuf();
+        std::string source = buffer.str();
+        file.close();
+
+        // Execute the file (suppress "ok" messages)
+        execute_line(source, state, true);
+
+        return 0;
+    }
+
+    // Print banner for interactive mode
+    std::cout << "Anvil Forth Compiler (LLVM " << LLVM_VERSION_STRING << ")\n";
+    std::cout << "Mode: " << (mode == ExecutionMode::JIT ? "JIT" : "Interpreter") << "\n";
+    std::cout << "Type help for help, quit to exit\n";
 
     // REPL loop
     using_history();
