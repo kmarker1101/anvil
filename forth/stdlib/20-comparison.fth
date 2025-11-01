@@ -6,11 +6,17 @@
 : 0= ( n -- flag )
     0 = ;
 
+: 0< ( n -- flag )
+    0 < ;
+
 : <> ( x1 x2 -- flag )
     = 0= ;
 
 : > ( n1 n2 -- flag )
     SWAP < ;
+
+: 0> ( n -- flag )
+    0 > ;
 
 : U> ( u1 u2 -- flag )
     SWAP U< ;

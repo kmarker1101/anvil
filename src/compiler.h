@@ -768,14 +768,16 @@ private:
             context_, node->value, false  // false = don't null-terminate
         );
 
-        // Create a global variable to hold the string
+        // Create a global variable to hold the string with unique name
+        static int string_counter = 0;
+        std::string var_name = ".str." + std::to_string(string_counter++);
         llvm::GlobalVariable* str_global = new llvm::GlobalVariable(
             module_,
             str_constant->getType(),
             true,  // isConstant
             llvm::GlobalValue::PrivateLinkage,
             str_constant,
-            ".str"
+            var_name
         );
 
         // Get pointer to the string data
@@ -797,11 +799,11 @@ private:
 
         // Push address and length onto data stack
         // Stack effect: ( -- addr len )
-        // Push len first, then addr (so addr ends up on TOS for array indexing)
-        adjust_dsp(builder_, dsp_ptr_, 1);
-        store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, str_len);
+        // Push addr first, then len (so len ends up on TOS)
         adjust_dsp(builder_, dsp_ptr_, 1);
         store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, str_addr);
+        adjust_dsp(builder_, dsp_ptr_, 1);
+        store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, str_len);
     }
 
     // Compile dot-quote for ." (prints string immediately)
@@ -811,28 +813,22 @@ private:
             context_, node->value, false  // false = don't null-terminate
         );
 
-        // Create a global variable to hold the string
+        // Create a global variable to hold the string with unique name
+        static int dotquote_counter = 0;
+        std::string var_name = ".str.dotquote." + std::to_string(dotquote_counter++);
         llvm::GlobalVariable* str_global = new llvm::GlobalVariable(
             module_,
             str_constant->getType(),
             true,  // isConstant
             llvm::GlobalValue::PrivateLinkage,
             str_constant,
-            ".str.dotquote"
+            var_name
         );
 
-        // Get pointer to the string data
-        llvm::Value* str_ptr = builder_.CreateBitCast(
+        // Get address of string as a constant integer
+        llvm::Value* str_addr = llvm::ConstantExpr::getPtrToInt(
             str_global,
-            llvm::PointerType::get(context_, 0),
-            "str_ptr"
-        );
-
-        // Convert pointer to int64 for Forth stack
-        llvm::Value* str_addr = builder_.CreatePtrToInt(
-            str_ptr,
-            builder_.getInt64Ty(),
-            "str_addr"
+            builder_.getInt64Ty()
         );
 
         // Get string length
@@ -841,9 +837,9 @@ private:
         // Push address and length onto data stack
         // Stack effect: ( -- addr len ) temporarily for TYPE
         adjust_dsp(builder_, dsp_ptr_, 1);
-        store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, str_len);
-        adjust_dsp(builder_, dsp_ptr_, 1);
         store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, str_addr);
+        adjust_dsp(builder_, dsp_ptr_, 1);
+        store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, str_len);
 
         // Call TYPE to print the string
         // TYPE consumes ( addr len -- ), leaving stack empty

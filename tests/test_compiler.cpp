@@ -173,133 +173,10 @@ TEST_CASE("Compiler compiles IF...THEN", "[compiler][control][if]") {
     }
 }
 
-TEST_CASE("Compiler compiles arithmetic primitives", "[compiler][primitives][arithmetic]") {
-    // Clear dictionary before each test
-    global_dictionary.clear();
-
-    SECTION("Addition") {
-        auto ctx = execute_forth("5 3 +");
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == 8);
-    }
-
-    SECTION("Subtraction") {
-        auto ctx = execute_forth("10 3 -");
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == 7);
-    }
-
-    SECTION("Multiplication") {
-        auto ctx = execute_forth("6 7 *");
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == 42);
-    }
-
-    SECTION("/MOD") {
-        auto ctx = execute_forth("17 5 /MOD");
-        REQUIRE(ctx.dsp == 2);
-        REQUIRE(ctx.data_stack[0] == 2);  // remainder
-        REQUIRE(ctx.data_stack[1] == 3);  // quotient
-    }
-
-    SECTION("Complex arithmetic expression") {
-        auto ctx = execute_forth("10 5 + 3 *");
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == 45);
-    }
-}
-
-TEST_CASE("Compiler compiles stack primitives", "[compiler][primitives][stack]") {
-    // Clear dictionary before each test
-    global_dictionary.clear();
-
-    SECTION("DUP") {
-        auto ctx = execute_forth("42 DUP");
-        REQUIRE(ctx.dsp == 2);
-        REQUIRE(ctx.data_stack[0] == 42);
-        REQUIRE(ctx.data_stack[1] == 42);
-    }
-
-    SECTION("DROP") {
-        auto ctx = execute_forth("10 20 30 DROP");
-        REQUIRE(ctx.dsp == 2);
-        REQUIRE(ctx.data_stack[0] == 10);
-        REQUIRE(ctx.data_stack[1] == 20);
-    }
-
-    SECTION("SWAP") {
-        auto ctx = execute_forth("10 20 SWAP");
-        REQUIRE(ctx.dsp == 2);
-        REQUIRE(ctx.data_stack[0] == 20);
-        REQUIRE(ctx.data_stack[1] == 10);
-    }
-
-    SECTION("OVER") {
-        auto ctx = execute_forth("10 20 OVER");
-        REQUIRE(ctx.dsp == 3);
-        REQUIRE(ctx.data_stack[0] == 10);
-        REQUIRE(ctx.data_stack[1] == 20);
-        REQUIRE(ctx.data_stack[2] == 10);
-    }
-
-    SECTION("Combined stack operations") {
-        auto ctx = execute_forth("5 DUP * ");  // Square: 5 DUP * = 25
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == 25);
-    }
-}
-
-TEST_CASE("Compiler compiles bitwise primitives", "[compiler][primitives][bitwise]") {
-    // Clear dictionary before each test
-    global_dictionary.clear();
-
-    SECTION("AND") {
-        auto ctx = execute_forth("0xFF 0x0F AND");
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == 0x0F);
-    }
-
-    SECTION("OR") {
-        auto ctx = execute_forth("0xF0 0x0F OR");
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == 0xFF);
-    }
-
-    SECTION("XOR") {
-        auto ctx = execute_forth("0xFF 0x0F XOR");
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == 0xF0);
-    }
-
-    SECTION("INVERT") {
-        auto ctx = execute_forth("0 INVERT");
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == -1);  // All bits set
-    }
-}
-
-TEST_CASE("Compiler compiles comparison primitives", "[compiler][primitives][comparison]") {
-    // Clear dictionary before each test
-    global_dictionary.clear();
-
-    SECTION("< true case") {
-        auto ctx = execute_forth("3 5 <");
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == -1);  // Forth true
-    }
-
-    SECTION("< false case") {
-        auto ctx = execute_forth("5 3 <");
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == 0);  // Forth false
-    }
-
-    SECTION("< equal case") {
-        auto ctx = execute_forth("5 5 <");
-        REQUIRE(ctx.dsp == 1);
-        REQUIRE(ctx.data_stack[0] == 0);  // Forth false
-    }
-}
+// Note: Arithmetic, stack, bitwise, and comparison primitive tests have been
+// moved to Forth-based tests in forth/tests/ directory. These tests run in all
+// three execution modes (JIT, interpreter, AOT) automatically.
+// See: forth/tests/arithmetic.fth, stack.fth, bitwise.fth, comparison.fth
 
 TEST_CASE("Compiler compiles primitives with control flow", "[compiler][primitives][control]") {
     // Clear dictionary before each test
@@ -385,25 +262,24 @@ TEST_CASE("Compiler compiles strings", "[compiler][strings]") {
     SECTION("S\" pushes address and length") {
         auto ctx = execute_forth("S\" Hello\" ");
         REQUIRE(ctx.dsp == 2);
-        // Stack should have: [addr, len]
-        REQUIRE(ctx.data_stack[0] == 5);  // length of "Hello"
-        // addr is at stack[1], should be non-zero
-        REQUIRE(ctx.data_stack[1] != 0);
+        // Stack should have: [addr, len] (addr on bottom, len on top)
+        REQUIRE(ctx.data_stack[0] != 0);  // addr (non-zero)
+        REQUIRE(ctx.data_stack[1] == 5);  // length of "Hello"
     }
 
     SECTION("S\" with empty string") {
         auto ctx = execute_forth("S\" \"");
         REQUIRE(ctx.dsp == 2);
-        REQUIRE(ctx.data_stack[0] == 0);  // length = 0
-        REQUIRE(ctx.data_stack[1] != 0);  // addr still valid
+        REQUIRE(ctx.data_stack[0] != 0);  // addr still valid
+        REQUIRE(ctx.data_stack[1] == 0);  // length = 0
     }
 
     SECTION("Multiple S\" strings") {
         auto ctx = execute_forth("S\" First\" S\" Second\"");
         REQUIRE(ctx.dsp == 4);
-        // Stack: [first_len, first_addr, second_len, second_addr]
-        REQUIRE(ctx.data_stack[0] == 5);  // "First" length
-        REQUIRE(ctx.data_stack[2] == 6);  // "Second" length
+        // Stack: [first_addr, first_len, second_addr, second_len]
+        REQUIRE(ctx.data_stack[1] == 5);  // "First" length
+        REQUIRE(ctx.data_stack[3] == 6);  // "Second" length
     }
 
     SECTION(".\" prints string immediately (stack empty)") {
@@ -439,7 +315,7 @@ TEST_CASE("Compiler compiles strings", "[compiler][strings]") {
         auto ctx = execute_forth("S\" stored\" .\" printed\"");
         // S" pushes addr+len, ." prints
         REQUIRE(ctx.dsp == 2);
-        REQUIRE(ctx.data_stack[0] == 6);  // "stored" length
+        REQUIRE(ctx.data_stack[1] == 6);  // "stored" length
     }
 }
 

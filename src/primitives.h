@@ -933,7 +933,7 @@ inline void emit_dot(llvm::IRBuilder<> &builder,
   llvm::GlobalVariable *format_global = module->getGlobalVariable(".dot_fmt", true);
   if (!format_global) {
     llvm::Constant *format_str = llvm::ConstantDataArray::getString(
-        builder.getContext(), "%lld ", false);
+        builder.getContext(), "%lld ", true);  // true = null-terminate for printf
     format_global = new llvm::GlobalVariable(
         *module, format_str->getType(), true,
         llvm::GlobalValue::PrivateLinkage, format_str, ".dot_fmt");
