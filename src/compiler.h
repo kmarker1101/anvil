@@ -140,6 +140,10 @@ private:
                 compile_string_literal(static_cast<StringLiteralNode*>(node));
                 break;
 
+            case ASTNodeType::DOT_QUOTE:
+                compile_dot_quote(static_cast<DotQuoteNode*>(node));
+                break;
+
             case ASTNodeType::VARIABLE:
                 compile_variable(static_cast<VariableNode*>(node));
                 break;
@@ -745,6 +749,52 @@ private:
         store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, str_len);
         adjust_dsp(builder_, dsp_ptr_, 1);
         store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, str_addr);
+    }
+
+    // Compile dot-quote for ." (prints string immediately)
+    void compile_dot_quote(DotQuoteNode* node) {
+        // Create a global string constant (same as S")
+        llvm::Constant* str_constant = llvm::ConstantDataArray::getString(
+            context_, node->value, false  // false = don't null-terminate
+        );
+
+        // Create a global variable to hold the string
+        llvm::GlobalVariable* str_global = new llvm::GlobalVariable(
+            module_,
+            str_constant->getType(),
+            true,  // isConstant
+            llvm::GlobalValue::PrivateLinkage,
+            str_constant,
+            ".str.dotquote"
+        );
+
+        // Get pointer to the string data
+        llvm::Value* str_ptr = builder_.CreateBitCast(
+            str_global,
+            llvm::PointerType::get(context_, 0),
+            "str_ptr"
+        );
+
+        // Convert pointer to int64 for Forth stack
+        llvm::Value* str_addr = builder_.CreatePtrToInt(
+            str_ptr,
+            builder_.getInt64Ty(),
+            "str_addr"
+        );
+
+        // Get string length
+        llvm::Value* str_len = builder_.getInt64(node->value.length());
+
+        // Push address and length onto data stack
+        // Stack effect: ( -- addr len ) temporarily for TYPE
+        adjust_dsp(builder_, dsp_ptr_, 1);
+        store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, str_len);
+        adjust_dsp(builder_, dsp_ptr_, 1);
+        store_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0, str_addr);
+
+        // Call TYPE to print the string
+        // TYPE consumes ( addr len -- ), leaving stack empty
+        emit_type(builder_, data_stack_ptr_, dsp_ptr_);
     }
 
 public:

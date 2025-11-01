@@ -14,7 +14,8 @@ namespace anvil {
 enum class TokenType {
     WORD,      // A word (to be looked up in dictionary)
     NUMBER,    // A numeric literal
-    STRING,    // A string literal (for S" and .")
+    STRING,    // A string literal (for S")
+    DOT_QUOTE, // A dot-quote string (for .")
     COMMENT,   // A comment (ignored during execution)
     END        // End of input
 };
@@ -179,6 +180,9 @@ public:
 
         // Check for string literals first: S" or ."
         if ((peek() == 'S' || peek() == 's' || peek() == '.') && pos_ + 1 < input_.size() && input_[pos_ + 1] == '"') {
+            // Remember which type it is
+            bool is_dot_quote = (peek() == '.');
+
             // Consume S" or ."
             advance(); // S or .
             advance(); // "
@@ -195,7 +199,7 @@ public:
             if (!at_end() && peek() == '"') {
                 advance(); // skip closing "
             }
-            return Token(TokenType::STRING, str, 0);
+            return Token(is_dot_quote ? TokenType::DOT_QUOTE : TokenType::STRING, str, 0);
         }
 
         // Parse a word

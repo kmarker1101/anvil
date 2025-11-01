@@ -405,6 +405,42 @@ TEST_CASE("Compiler compiles strings", "[compiler][strings]") {
         REQUIRE(ctx.data_stack[0] == 5);  // "First" length
         REQUIRE(ctx.data_stack[2] == 6);  // "Second" length
     }
+
+    SECTION(".\" prints string immediately (stack empty)") {
+        auto ctx = execute_forth(".\" Hello\"");
+        // ." consumes the string and prints it, leaving stack empty
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION(".\" with empty string") {
+        auto ctx = execute_forth(".\" \"");
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION(".\" followed by stack operations") {
+        auto ctx = execute_forth(".\" Test\" 42");
+        // ." prints and consumes, then 42 is pushed
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);
+    }
+
+    SECTION("Multiple .\" strings") {
+        auto ctx = execute_forth(".\" First\" .\" Second\"");
+        // Both strings printed and consumed
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION(".\" in word definition") {
+        auto ctx = execute_forth(": GREET .\" Hello, World!\" ; GREET");
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION(".\" with S\" mixed") {
+        auto ctx = execute_forth("S\" stored\" .\" printed\"");
+        // S" pushes addr+len, ." prints
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 6);  // "stored" length
+    }
 }
 
 TEST_CASE("Compiler compiles user-defined words", "[compiler][definitions]") {
