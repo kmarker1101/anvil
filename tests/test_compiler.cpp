@@ -816,6 +816,150 @@ TEST_CASE("Compiler compiles ?DO...LOOP", "[compiler][control][loops][questiondo
     }
 }
 
+// ============================================================================
+// VARIABLE Tests
+// ============================================================================
+
+TEST_CASE("VARIABLE - Basic storage and retrieval", "[variable]") {
+    SECTION("Store and fetch a value") {
+        auto ctx = execute_forth("VARIABLE MYVAR  100 MYVAR !  MYVAR @");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 100);
+    }
+
+    SECTION("Store and fetch zero") {
+        auto ctx = execute_forth("VARIABLE ZEROVAR  0 ZEROVAR !  ZEROVAR @");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("Store and fetch negative value") {
+        auto ctx = execute_forth("VARIABLE NEGVAR  -42 NEGVAR !  NEGVAR @");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -42);
+    }
+
+    SECTION("Store and fetch large value") {
+        auto ctx = execute_forth("VARIABLE BIGVAR  1000000 BIGVAR !  BIGVAR @");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1000000);
+    }
+}
+
+TEST_CASE("VARIABLE - Multiple variables", "[variable]") {
+    SECTION("Two variables with different values") {
+        auto ctx = execute_forth("VARIABLE VAR1  VARIABLE VAR2  "
+                                 "10 VAR1 !  20 VAR2 !  "
+                                 "VAR1 @  VAR2 @");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+    }
+
+    SECTION("Three variables") {
+        auto ctx = execute_forth("VARIABLE A  VARIABLE B  VARIABLE C  "
+                                 "100 A !  200 B !  300 C !  "
+                                 "A @  B @  C @");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 100);
+        REQUIRE(ctx.data_stack[1] == 200);
+        REQUIRE(ctx.data_stack[2] == 300);
+    }
+
+    SECTION("Variables don't interfere with each other") {
+        auto ctx = execute_forth("VARIABLE X  VARIABLE Y  "
+                                 "42 X !  X @  "
+                                 "99 Y !  Y @  "
+                                 "X @");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 42);  // First X @
+        REQUIRE(ctx.data_stack[1] == 99);  // Y @
+        REQUIRE(ctx.data_stack[2] == 42);  // Second X @ (unchanged)
+    }
+}
+
+TEST_CASE("VARIABLE - Update values", "[variable]") {
+    SECTION("Store, fetch, update, fetch") {
+        auto ctx = execute_forth("VARIABLE VAR  "
+                                 "10 VAR !  VAR @  "
+                                 "20 VAR !  VAR @");
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+    }
+
+    SECTION("Multiple updates") {
+        auto ctx = execute_forth("VARIABLE CNT  "
+                                 "1 CNT !  CNT @  "
+                                 "2 CNT !  CNT @  "
+                                 "3 CNT !  CNT @");
+        REQUIRE(ctx.dsp == 3);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+        REQUIRE(ctx.data_stack[2] == 3);
+    }
+}
+
+TEST_CASE("VARIABLE - In word definitions", "[variable]") {
+    SECTION("Variable used in word definition") {
+        auto ctx = execute_forth("VARIABLE COUNTER  "
+                                 ": SETCOUNTER ( n -- ) COUNTER ! ;  "
+                                 ": GETCOUNTER ( -- n ) COUNTER @ ;  "
+                                 "42 SETCOUNTER  GETCOUNTER");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);
+    }
+
+    SECTION("Variable modified by word") {
+        auto ctx = execute_forth("VARIABLE VAL  "
+                                 ": INIT ( -- ) 100 VAL ! ;  "
+                                 "INIT  VAL @");
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 100);
+    }
+}
+
+TEST_CASE("VARIABLE - VARIABLE address behavior", "[variable]") {
+    SECTION("VARIABLE pushes its address") {
+        auto ctx = execute_forth("VARIABLE TEST  TEST");
+        REQUIRE(ctx.dsp == 1);
+        // Address should be non-zero and point to data space
+        REQUIRE(ctx.data_stack[0] != 0);
+    }
+
+    SECTION("Two VARIABLE calls push different addresses") {
+        auto ctx = execute_forth("VARIABLE A  VARIABLE B  A  B");
+        REQUIRE(ctx.dsp == 2);
+        // Addresses should be different
+        REQUIRE(ctx.data_stack[0] != ctx.data_stack[1]);
+    }
+}
+
+TEST_CASE("VARIABLE - Stack consumption by ! and @", "[variable][store][fetch]") {
+    SECTION("! consumes both arguments") {
+        auto ctx = execute_forth("VARIABLE X  50 X !");
+        // ! should consume both the value and address
+        REQUIRE(ctx.dsp == 0);
+    }
+
+    SECTION("@ consumes address and leaves value") {
+        auto ctx = execute_forth("VARIABLE X  100 X !  X @");
+        // Should have exactly 1 value on stack (the fetched value)
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 100);
+    }
+
+    SECTION("Multiple stores and fetches") {
+        auto ctx = execute_forth("VARIABLE X  "
+                                 "10 X !  X @  "
+                                 "20 X !  X @");
+        // Should have 2 values: 10 and 20
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 10);
+        REQUIRE(ctx.data_stack[1] == 20);
+    }
+}
+
 // Clean up dictionary after tests
 TEST_CASE("Cleanup", "[.cleanup]") {
     global_dictionary.clear();
