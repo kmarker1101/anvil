@@ -25,7 +25,8 @@ enum class ASTNodeType {
     BEGIN_WHILE_REPEAT, // BEGIN ... WHILE ... REPEAT
     DO_LOOP,        // DO ... LOOP
     DO_PLUS_LOOP,   // DO ... +LOOP
-    STRING_LITERAL, // String literal for S" or ."
+    STRING_LITERAL, // String literal for S"
+    DOT_QUOTE,      // Dot-quote string for ." (prints immediately)
     VARIABLE,       // VARIABLE name - creates a variable
     CONSTANT,       // CONSTANT name - creates a constant
     TICK            // ' name - get execution token of name
@@ -162,6 +163,14 @@ struct StringLiteralNode : public ASTNode {
         : ASTNode(ASTNodeType::STRING_LITERAL), value(str) {}
 };
 
+// Dot-quote node (prints string immediately)
+struct DotQuoteNode : public ASTNode {
+    std::string value;
+
+    DotQuoteNode(const std::string& str)
+        : ASTNode(ASTNodeType::DOT_QUOTE), value(str) {}
+};
+
 // AST Builder - converts tokens to AST
 class ASTBuilder {
 private:
@@ -225,6 +234,13 @@ private:
             std::string value = token.text;
             advance();
             return std::make_unique<StringLiteralNode>(value);
+        }
+
+        // Handle dot-quote strings
+        if (token.type == TokenType::DOT_QUOTE) {
+            std::string value = token.text;
+            advance();
+            return std::make_unique<DotQuoteNode>(value);
         }
 
         // Handle words and control structures
