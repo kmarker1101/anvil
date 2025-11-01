@@ -451,6 +451,63 @@ std::string get_runtime_lib_name() {
 #endif
 }
 
+// Recursively expand INCLUDE directives in source code
+std::string expand_includes(const std::string& source) {
+    std::stringstream result;
+    std::istringstream input(source);
+    std::string line;
+
+    while (std::getline(input, line)) {
+        // Check if line contains INCLUDE
+        std::string trimmed = line;
+        size_t start = trimmed.find_first_not_of(" \t\r\n");
+        if (start != std::string::npos) {
+            trimmed = trimmed.substr(start);
+        }
+
+        if (trimmed.size() >= 7) {
+            std::string prefix = trimmed.substr(0, 7);
+            std::transform(prefix.begin(), prefix.end(), prefix.begin(), ::toupper);
+
+            bool valid_include = (prefix == "INCLUDE") &&
+                                 (trimmed.size() == 7 || std::isspace(trimmed[7]));
+
+            if (valid_include) {
+                // Extract filename
+                std::string filename = trimmed.substr(7);
+                size_t file_start = filename.find_first_not_of(" \t\r\n");
+                size_t file_end = filename.find_last_not_of(" \t\r\n");
+                if (file_start != std::string::npos && file_end != std::string::npos) {
+                    filename = filename.substr(file_start, file_end - file_start + 1);
+
+                    // Read and recursively expand the included file
+                    std::ifstream inc_file(filename);
+                    if (inc_file.is_open()) {
+                        std::stringstream inc_buffer;
+                        inc_buffer << inc_file.rdbuf();
+                        std::string inc_source = inc_buffer.str();
+                        inc_file.close();
+
+                        // Recursively expand INCLUDEs in the included file
+                        result << expand_includes(inc_source);
+                    } else {
+                        std::cerr << "Error: Could not open included file: " << filename << "\n";
+                        result << line << "\n";
+                    }
+                } else {
+                    result << line << "\n";
+                }
+            } else {
+                result << line << "\n";
+            }
+        } else {
+            result << line << "\n";
+        }
+    }
+
+    return result.str();
+}
+
 // Compile Forth source file to executable
 bool compile_file(const std::string& input_file, const std::string& output_file) {
     // Read input file
@@ -464,6 +521,9 @@ bool compile_file(const std::string& input_file, const std::string& output_file)
     buffer << file.rdbuf();
     std::string source = buffer.str();
     file.close();
+
+    // Expand INCLUDE directives
+    source = expand_includes(source);
 
     // Parse to AST
     ASTBuilder builder;
@@ -706,13 +766,12 @@ int main(int argc, char** argv) {
             return 1;
         }
 
-        std::stringstream buffer;
-        buffer << file.rdbuf();
-        std::string source = buffer.str();
+        // Read and execute file line-by-line to support INCLUDE
+        std::string line;
+        while (std::getline(file, line)) {
+            execute_line(line, state, true);
+        }
         file.close();
-
-        // Execute the file (suppress "ok" messages)
-        execute_line(source, state, true);
 
         return 0;
     }
