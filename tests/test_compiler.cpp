@@ -385,25 +385,24 @@ TEST_CASE("Compiler compiles strings", "[compiler][strings]") {
     SECTION("S\" pushes address and length") {
         auto ctx = execute_forth("S\" Hello\" ");
         REQUIRE(ctx.dsp == 2);
-        // Stack should have: [addr, len]
-        REQUIRE(ctx.data_stack[0] == 5);  // length of "Hello"
-        // addr is at stack[1], should be non-zero
-        REQUIRE(ctx.data_stack[1] != 0);
+        // Stack should have: [addr, len] (addr on bottom, len on top)
+        REQUIRE(ctx.data_stack[0] != 0);  // addr (non-zero)
+        REQUIRE(ctx.data_stack[1] == 5);  // length of "Hello"
     }
 
     SECTION("S\" with empty string") {
         auto ctx = execute_forth("S\" \"");
         REQUIRE(ctx.dsp == 2);
-        REQUIRE(ctx.data_stack[0] == 0);  // length = 0
-        REQUIRE(ctx.data_stack[1] != 0);  // addr still valid
+        REQUIRE(ctx.data_stack[0] != 0);  // addr still valid
+        REQUIRE(ctx.data_stack[1] == 0);  // length = 0
     }
 
     SECTION("Multiple S\" strings") {
         auto ctx = execute_forth("S\" First\" S\" Second\"");
         REQUIRE(ctx.dsp == 4);
-        // Stack: [first_len, first_addr, second_len, second_addr]
-        REQUIRE(ctx.data_stack[0] == 5);  // "First" length
-        REQUIRE(ctx.data_stack[2] == 6);  // "Second" length
+        // Stack: [first_addr, first_len, second_addr, second_len]
+        REQUIRE(ctx.data_stack[1] == 5);  // "First" length
+        REQUIRE(ctx.data_stack[3] == 6);  // "Second" length
     }
 
     SECTION(".\" prints string immediately (stack empty)") {
@@ -439,7 +438,7 @@ TEST_CASE("Compiler compiles strings", "[compiler][strings]") {
         auto ctx = execute_forth("S\" stored\" .\" printed\"");
         // S" pushes addr+len, ." prints
         REQUIRE(ctx.dsp == 2);
-        REQUIRE(ctx.data_stack[0] == 6);  // "stored" length
+        REQUIRE(ctx.data_stack[1] == 6);  // "stored" length
     }
 }
 
