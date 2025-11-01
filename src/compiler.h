@@ -851,7 +851,7 @@ private:
     }
 
 public:
-    Compiler(llvm::LLVMContext& context, llvm::Module& module)
+    Compiler(llvm::LLVMContext& context, llvm::Module& module, size_t initial_here = 0)
         : context_(context),
           module_(module),
           builder_(context),
@@ -863,8 +863,13 @@ public:
           dsp_ptr_(nullptr),
           rsp_ptr_(nullptr),
           here_ptr_(nullptr),
-          compile_time_here_(0) {
+          compile_time_here_(initial_here) {
         init_context_type();
+    }
+
+    // Get current compile-time HERE value (for persistent REPL state)
+    size_t get_compile_time_here() const {
+        return compile_time_here_;
     }
 
     // Compile an AST tree
