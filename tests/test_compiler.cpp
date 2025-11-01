@@ -642,6 +642,180 @@ TEST_CASE("Compiler compiles RECURSE", "[compiler][recurse][recursion]") {
     }
 }
 
+TEST_CASE("Compiler compiles EXIT", "[compiler][control][exit]") {
+    // Clear dictionary before each test
+    global_dictionary.clear();
+
+    SECTION("Simple EXIT in word") {
+        auto ctx = execute_forth(": TEST 1 2 EXIT 3 ; TEST");
+        // Should push 1 and 2, then EXIT before pushing 3
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 1);
+        REQUIRE(ctx.data_stack[1] == 2);
+    }
+
+    SECTION("EXIT in IF branch") {
+        auto ctx = execute_forth_with_stdlib(": TEST DUP 5 > IF EXIT THEN 99 ; 10 TEST");
+        // 10 > 5 is true, so EXIT, leaving just 10 on stack
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("EXIT not taken in ELSE branch") {
+        auto ctx = execute_forth_with_stdlib(": TEST DUP 5 > IF EXIT THEN 99 ; 3 TEST");
+        // 3 > 5 is false, so continue and push 99
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 3);
+        REQUIRE(ctx.data_stack[1] == 99);
+    }
+
+    SECTION("EXIT with conditional logic") {
+        auto ctx = execute_forth(": ABS DUP 0 < IF -1 * EXIT THEN ; -5 ABS");
+        // -5 < 0, so negate and EXIT
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 5);
+    }
+
+    SECTION("EXIT in loop") {
+        auto ctx = execute_forth(": TEST 0 10 0 DO I + I 5 = IF EXIT THEN LOOP ; TEST");
+        // Sum 0+1+2+3+4+5, then EXIT when I=5
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 15);
+    }
+
+    SECTION("Multiple paths with EXIT") {
+        auto ctx = execute_forth(": TEST DUP 0 = IF DROP 0 EXIT THEN DUP 1 = IF DROP 1 EXIT THEN 99 ; 0 TEST");
+        // Input is 0, first IF is true, push 0 and EXIT
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 0);
+    }
+
+    SECTION("Multiple paths with EXIT - second path") {
+        auto ctx = execute_forth(": TEST DUP 0 = IF DROP 0 EXIT THEN DUP 1 = IF DROP 1 EXIT THEN 99 ; 1 TEST");
+        // Input is 1, second IF is true, push 1 and EXIT
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 1);
+    }
+
+    SECTION("Multiple paths with EXIT - fallthrough") {
+        auto ctx = execute_forth(": TEST DUP 0 = IF DROP 0 EXIT THEN DUP 1 = IF DROP 1 EXIT THEN 99 ; 5 TEST");
+        // Input is 5, both IFs false, push 99
+        REQUIRE(ctx.dsp == 2);
+        REQUIRE(ctx.data_stack[0] == 5);
+        REQUIRE(ctx.data_stack[1] == 99);
+    }
+}
+
+TEST_CASE("Compiler compiles UNLOOP", "[compiler][control][unloop][loops]") {
+    // Clear dictionary before each test
+    global_dictionary.clear();
+
+    SECTION("UNLOOP with EXIT in DO loop") {
+        auto ctx = execute_forth(": TEST 0 10 0 DO I + I 5 = IF UNLOOP EXIT THEN LOOP ; TEST");
+        // Sum 0+1+2+3+4+5, when I=5 UNLOOP and EXIT
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 15);
+    }
+
+    SECTION("UNLOOP allows clean EXIT from nested loop") {
+        auto ctx = execute_forth(": TEST 3 0 DO 3 0 DO I J + DUP 4 = IF UNLOOP UNLOOP EXIT THEN DROP LOOP LOOP 99 ; TEST");
+        // Nested loop, exit when I+J=4, return that value
+        // If no early exit, pushes 99
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 4);
+    }
+
+    SECTION("UNLOOP in conditional within loop") {
+        auto ctx = execute_forth_with_stdlib(": TEST 0 20 0 DO I + I 7 > IF UNLOOP EXIT THEN LOOP ; TEST");
+        // Sum 0+1+2+...+8, then UNLOOP and EXIT when I>7 (I=8)
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 36);  // 0+1+2+3+4+5+6+7+8 = 36
+    }
+
+    SECTION("UNLOOP with early termination") {
+        auto ctx = execute_forth(": TEST 100 0 DO I DUP 3 = IF UNLOOP EXIT THEN DROP LOOP 99 ; TEST");
+        // Loop until I=3, then UNLOOP EXIT, leaving 3 on stack
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 3);
+    }
+
+    SECTION("UNLOOP prevents stack corruption on EXIT") {
+        auto ctx = execute_forth_with_stdlib(": TEST 5 0 DO I 1+ DUP 3 = IF UNLOOP EXIT THEN DROP LOOP 99 ; TEST");
+        // Loop, when I+1=3 (I=2), UNLOOP EXIT leaving 3 on stack
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 3);
+    }
+}
+
+TEST_CASE("Compiler compiles ?DO...LOOP", "[compiler][control][loops][questiondo]") {
+    // Clear dictionary before each test
+    global_dictionary.clear();
+
+    SECTION("?DO...LOOP executes when start < limit") {
+        auto ctx = execute_forth(": TEST 0 5 0 ?DO I + LOOP ; TEST");
+        // Sum 0+1+2+3+4 = 10
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 10);
+    }
+
+    SECTION("?DO...LOOP skips when start = limit") {
+        auto ctx = execute_forth(": TEST 99 5 5 ?DO I + LOOP ; TEST");
+        // Loop doesn't execute, 99 remains
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 99);
+    }
+
+    SECTION("?DO...LOOP skips when start > limit") {
+        auto ctx = execute_forth(": TEST 42 5 10 ?DO I + LOOP ; TEST");
+        // limit=5, start=10: 10 >= 5 so loop doesn't execute, 42 remains
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 42);
+    }
+
+    SECTION("?DO...LOOP with negative range") {
+        auto ctx = execute_forth(": TEST 0 0 -5 ?DO I + LOOP ; TEST");
+        // -5 to -1: sum = -5+-4+-3+-2+-1 = -15
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == -15);
+    }
+
+    SECTION("?DO...+LOOP with increment") {
+        auto ctx = execute_forth(": TEST 0 10 0 ?DO I + 2 +LOOP ; TEST");
+        // 0, 2, 4, 6, 8 : sum = 20
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 20);
+    }
+
+    SECTION("?DO...+LOOP skips when start >= limit") {
+        auto ctx = execute_forth(": TEST 100 5 10 ?DO I + 2 +LOOP ; TEST");
+        // start > limit, doesn't execute
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 100);
+    }
+
+    SECTION("Nested ?DO loops") {
+        auto ctx = execute_forth(": TEST 0 3 0 ?DO 3 0 ?DO I J + + LOOP LOOP ; TEST");
+        // Outer: I=0,1,2  Inner: J=0,1,2
+        // Accumulates all I+J combinations
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 18);  // (0+0)+(0+1)+(0+2) + (1+0)+(1+1)+(1+2) + (2+0)+(2+1)+(2+2)
+    }
+
+    SECTION("?DO with LEAVE") {
+        auto ctx = execute_forth(": TEST 0 10 0 ?DO I + I 5 = IF LEAVE THEN LOOP ; TEST");
+        // Sum until I=5, then LEAVE
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 15);  // 0+1+2+3+4+5 = 15
+    }
+
+    SECTION("?DO with UNLOOP and EXIT") {
+        auto ctx = execute_forth(": TEST 0 10 0 ?DO I + I 3 = IF UNLOOP EXIT THEN LOOP 99 ; TEST");
+        // Sum 0+1+2+3, then UNLOOP EXIT
+        REQUIRE(ctx.dsp == 1);
+        REQUIRE(ctx.data_stack[0] == 6);  // 0+1+2+3 = 6
+    }
+}
+
 // Clean up dictionary after tests
 TEST_CASE("Cleanup", "[.cleanup]") {
     global_dictionary.clear();

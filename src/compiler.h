@@ -184,6 +184,20 @@ private:
             return;
         }
 
+        if (upper_name == "EXIT") {
+            // EXIT returns from the current word immediately
+            if (!current_function_) {
+                throw std::runtime_error("EXIT used outside of definition");
+            }
+            builder_.CreateRetVoid();
+            // Create a new block for any unreachable code after EXIT
+            llvm::BasicBlock* after_exit = llvm::BasicBlock::Create(
+                context_, "after_exit", current_function_
+            );
+            builder_.SetInsertPoint(after_exit);
+            return;
+        }
+
         if (upper_name == "RECURSE") {
             // RECURSE calls the word currently being defined
             if (!current_function_) {
@@ -601,7 +615,7 @@ private:
         builder_.SetInsertPoint(exit_block);
     }
 
-    // Compile DO...LOOP with full loop index support
+    // Compile DO...LOOP or ?DO...LOOP with full loop index support
     void compile_do_loop(DoLoopNode* node) {
         // Stack at entry: ( limit start -- )
         // We need to move limit and start to return stack
@@ -619,6 +633,36 @@ private:
 
         // Push loop exit block for LEAVE support
         loop_exit_stack_.push_back(loop_exit);
+
+        // For ?DO, check if start < limit before entering loop
+        if (node->is_question_do) {
+            // Duplicate start and limit to check condition
+            // Stack: ( limit start -- limit start )
+            llvm::Value* start_val = load_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 0);
+            llvm::Value* limit_val = load_stack_at_depth(builder_, data_stack_ptr_, dsp_ptr_, 1);
+
+            // Compare: start < limit
+            llvm::Value* should_loop = builder_.CreateICmpSLT(start_val, limit_val, "should_loop");
+
+            // Create blocks for conditional entry
+            llvm::BasicBlock* setup_block = llvm::BasicBlock::Create(
+                context_, "loop_setup", current_function_
+            );
+            llvm::BasicBlock* skip_block = llvm::BasicBlock::Create(
+                context_, "loop_skip", current_function_
+            );
+
+            // If start >= limit, skip to skip_block to just pop values
+            builder_.CreateCondBr(should_loop, setup_block, skip_block);
+
+            // Skip block: pop values from stack without running loop
+            builder_.SetInsertPoint(skip_block);
+            adjust_dsp(builder_, dsp_ptr_, -2);  // Drop limit and start
+            builder_.CreateBr(loop_exit);
+
+            // Setup block: move to return stack
+            builder_.SetInsertPoint(setup_block);
+        }
 
         // Pop start and limit from data stack and push to return stack
         // Stack: ( limit start -- )

@@ -581,6 +581,19 @@ inline void emit_two_from_r(llvm::IRBuilder<> &builder,
   store_stack_at_depth(builder, data_stack_ptr, dsp_ptr, 0, n2);
 }
 
+// Emit LLVM IR for UNLOOP
+// Stack effect: ( -- ) (R: n1 n2 -- )
+// Discards loop control parameters from return stack
+inline void emit_unloop(llvm::IRBuilder<> &builder,
+                        llvm::Value *rsp_ptr) {
+  // Load current return stack pointer
+  llvm::Value *rsp = builder.CreateLoad(builder.getInt64Ty(), rsp_ptr, "rsp");
+
+  // Decrement return stack pointer by 2 (discard index and limit)
+  llvm::Value *new_rsp = builder.CreateSub(rsp, builder.getInt64(2), "new_rsp");
+  builder.CreateStore(new_rsp, rsp_ptr);
+}
+
 // Emit LLVM IR for the 2R@ primitive (two-r-fetch)
 // Stack effect: ( -- n1 n2 ) (R: n1 n2 -- n1 n2)
 // Copies top two values from return stack to data stack without removing them
