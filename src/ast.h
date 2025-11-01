@@ -147,12 +147,14 @@ struct BeginWhileRepeatNode : public ASTNode {
 // DO...LOOP node
 struct DoLoopNode : public ASTNode {
     ASTNodePtr body;
-    bool is_plus_loop;  // true for +LOOP, false for LOOP
+    bool is_plus_loop;   // true for +LOOP, false for LOOP
+    bool is_question_do; // true for ?DO, false for DO
 
-    DoLoopNode(ASTNodePtr loop_body, bool plus_loop = false)
+    DoLoopNode(ASTNodePtr loop_body, bool plus_loop = false, bool question_do = false)
         : ASTNode(ASTNodeType::DO_LOOP),
           body(std::move(loop_body)),
-          is_plus_loop(plus_loop) {}
+          is_plus_loop(plus_loop),
+          is_question_do(question_do) {}
 };
 
 // String literal node
@@ -258,8 +260,10 @@ private:
                 return parse_if();
             } else if (match_word("BEGIN")) {
                 return parse_begin();
+            } else if (match_word("?DO")) {
+                return parse_do_loop(true);  // true = is_question_do
             } else if (match_word("DO")) {
-                return parse_do_loop();
+                return parse_do_loop(false); // false = regular DO
             } else {
                 // Regular word call
                 std::string word_name = token.text;
@@ -419,9 +423,13 @@ private:
         }
     }
 
-    // Parse DO...LOOP or DO...+LOOP
-    ASTNodePtr parse_do_loop() {
-        expect_word("DO");
+    // Parse DO...LOOP, DO...+LOOP, ?DO...LOOP, or ?DO...+LOOP
+    ASTNodePtr parse_do_loop(bool is_question_do = false) {
+        if (is_question_do) {
+            expect_word("?DO");
+        } else {
+            expect_word("DO");
+        }
 
         // Parse body
         auto body = std::make_unique<SequenceNode>();
@@ -436,9 +444,9 @@ private:
         bool is_plus_loop = match_word("+LOOP");
         if (is_plus_loop || match_word("LOOP")) {
             advance();
-            return std::make_unique<DoLoopNode>(std::move(body), is_plus_loop);
+            return std::make_unique<DoLoopNode>(std::move(body), is_plus_loop, is_question_do);
         } else {
-            throw std::runtime_error("Expected LOOP or +LOOP after DO");
+            throw std::runtime_error("Expected LOOP or +LOOP after DO or ?DO");
         }
     }
 

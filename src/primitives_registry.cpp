@@ -117,6 +117,10 @@ void initialize_primitives() {
         emit_two_r_fetch(builder, data_stack, return_stack, dsp, rsp);
     });
 
+    global_primitives.register_primitive("UNLOOP", [](auto& builder, auto, auto, auto, auto, auto rsp, auto, auto, auto, auto) {
+        emit_unloop(builder, rsp);
+    });
+
     // String/IO operations
     global_primitives.register_primitive("TYPE", [](auto& builder, auto data_stack, auto, auto, auto dsp, auto, auto, auto, auto, auto) {
         emit_type(builder, data_stack, dsp);
