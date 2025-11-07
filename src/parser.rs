@@ -16,6 +16,9 @@ pub enum Definition {
     /// : SQUARE DUP * ;
     Word { name: String, body: Vec<Expression> },
 
+    /// VARIABLE name
+    Variable { name: String },
+
     /// Just a top-level expression (for REPL mode)
     Expression(Expression),
 }
@@ -25,8 +28,11 @@ pub enum Expression {
     /// Literal number: 42
     Number(i64),
 
-    /// String literal: " hello "
+    /// String literal: S" hello "
     String(String),
+
+    /// Print string literal: ." hello "
+    DotQuote(String),
 
     /// Word call: DUP, SWAP, MYWORD, +, *, etc.
     WordCall(String),
@@ -70,6 +76,9 @@ pub enum Expression {
 
     /// EXIT - early return from current word
     Exit,
+
+    /// BYE - exit the program
+    Bye,
 }
 
 // ============================================================================
@@ -134,11 +143,36 @@ impl Parser {
     fn parse_definition(&mut self) -> Result<Definition, ParseError> {
         if self.check(&Token::Colon) {
             self.parse_word_definition()
+        } else if self.check(&Token::Variable) {
+            self.parse_variable_definition()
         } else {
             // Top-level expression (for REPL)
             let expr = self.parse_expression()?;
             Ok(Definition::Expression(expr))
         }
+    }
+
+    /// Parse variable definition: VARIABLE NAME
+    fn parse_variable_definition(&mut self) -> Result<Definition, ParseError> {
+        self.advance(); // consume VARIABLE
+
+        // Get variable name
+        let name = match self.peek() {
+            Some(Token::Word(w)) => {
+                let n = w.clone();
+                self.advance();
+                n
+            }
+            Some(token) => {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "variable name".to_string(),
+                    found: token.clone(),
+                })
+            }
+            None => return Err(ParseError::UnexpectedEof),
+        };
+
+        Ok(Definition::Variable { name })
     }
 
     /// Parse word definition: : NAME body ;
@@ -188,6 +222,12 @@ impl Parser {
                 Ok(Expression::String(string))
             }
 
+            Some(Token::DotQuote(s)) => {
+                let string = s.clone();
+                self.advance();
+                Ok(Expression::DotQuote(string))
+            }
+
             Some(Token::If) => self.parse_if(),
 
             Some(Token::Begin) => self.parse_begin(),
@@ -203,6 +243,11 @@ impl Parser {
             Some(Token::Exit) => {
                 self.advance();
                 Ok(Expression::Exit)
+            }
+
+            Some(Token::Bye) => {
+                self.advance();
+                Ok(Expression::Bye)
             }
 
             Some(Token::Word(w)) => {

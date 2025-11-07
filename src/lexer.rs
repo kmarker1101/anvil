@@ -11,6 +11,7 @@ pub enum Token {
     // Special symbols
     Colon,              // :
     Semicolon,          // ;
+    Variable,           // VARIABLE
     
     // Control flow
     If,                 // IF
@@ -26,11 +27,13 @@ pub enum Token {
     PlusLoop,           // +LOOP
     Recurse,            // RECURSE
     Exit,               // EXIT
-    
+    Bye,                // BYE
+
     // Literals
     Number(i64),        // 42, -17, 0xFF
-    String(String),     // " hello world"
-    
+    String(String),     // S" hello world"
+    DotQuote(String),   // ." hello world"
+
     // Words (identifiers)
     Word(String),       // DUP, SWAP, MYWORD, etc.
     
@@ -42,6 +45,7 @@ impl fmt::Display for Token {
         match self {
             Token::Colon => write!(f, ":"),
             Token::Semicolon => write!(f, ";"),
+            Token::Variable => write!(f, "VARIABLE"),
             Token::If => write!(f, "IF"),
             Token::Then => write!(f, "THEN"),
             Token::Else => write!(f, "ELSE"),
@@ -55,8 +59,10 @@ impl fmt::Display for Token {
             Token::PlusLoop => write!(f, "+LOOP"),
             Token::Recurse => write!(f, "RECURSE"),
             Token::Exit => write!(f, "EXIT"),
+            Token::Bye => write!(f, "BYE"),
             Token::Number(n) => write!(f, "{}", n),
             Token::String(s) => write!(f, "\"{}\"", s),
+            Token::DotQuote(s) => write!(f, ".\"{}\"", s),
             Token::Word(w) => write!(f, "{}", w),
         }
     }
@@ -142,6 +148,19 @@ impl Lexer {
             self.position = saved_pos;
         }
 
+        // Check for ." specifically (dot-quote)
+        if self.peek() == Some('.') {
+            let saved_pos = self.position;
+            self.advance();
+            if self.peek() == Some('"') {
+                // This is ." - parse the string as DotQuote
+                self.advance(); // consume the "
+                return self.parse_dot_quote();
+            }
+            // Not .", restore position and continue
+            self.position = saved_pos;
+        }
+
         // Read until whitespace or special character
         while let Some(ch) = self.peek() {
             if ch.is_whitespace() || ch == ':' || ch == ';' || ch == '(' || ch == '"' {
@@ -159,6 +178,7 @@ impl Lexer {
         // Check for keywords (case-insensitive in Forth)
         let upper_word = word.to_uppercase();
         let token = match upper_word.as_str() {
+            "VARIABLE" => Token::Variable,
             "IF" => Token::If,
             "THEN" => Token::Then,
             "ELSE" => Token::Else,
@@ -172,6 +192,7 @@ impl Lexer {
             "+LOOP" => Token::PlusLoop,
             "RECURSE" => Token::Recurse,
             "EXIT" => Token::Exit,
+            "BYE" => Token::Bye,
             _ => Token::Word(word),
         };
 
@@ -252,14 +273,30 @@ impl Lexer {
 
     fn parse_string(&mut self) -> Result<Token, LexerError> {
         self.advance(); // consume opening "
-        
+
         let start = self.position;
-        
+
         while let Some(ch) = self.peek() {
             if ch == '"' {
                 let s: String = self.input[start..self.position].iter().collect();
                 self.advance(); // consume closing "
                 return Ok(Token::String(s));
+            }
+            self.advance();
+        }
+
+        Err(LexerError::UnterminatedString)
+    }
+
+    fn parse_dot_quote(&mut self) -> Result<Token, LexerError> {
+        // Opening " is already consumed by parse_word
+        let start = self.position;
+
+        while let Some(ch) = self.peek() {
+            if ch == '"' {
+                let s: String = self.input[start..self.position].iter().collect();
+                self.advance(); // consume closing "
+                return Ok(Token::DotQuote(s));
             }
             self.advance();
         }

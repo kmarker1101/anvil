@@ -45,6 +45,12 @@ pub enum Instruction {
 
     /// Allocate string in memory and push (addr len) onto stack
     AllocString(String),
+
+    /// Push variable address onto stack
+    VariableAddr(String),
+
+    /// Exit the program
+    Bye,
 }
 
 #[derive(Debug, Clone)]
@@ -116,7 +122,7 @@ impl Compiler {
             ("!", Primitive::Store),
             ("C@", Primitive::CFetch),
             ("C!", Primitive::CStore),
-            
+
             // Stack
             ("DUP", Primitive::Dup),
             ("DROP", Primitive::Drop),
@@ -156,6 +162,9 @@ impl Compiler {
 
             // Loop counter
             ("I", Primitive::I),
+
+            // Stack inspection
+            ("DEPTH", Primitive::Depth),
         ];
 
         for (name, prim) in primitives {
@@ -180,6 +189,25 @@ impl Compiler {
     /// Compile a single definition
     fn compile_definition(&mut self, definition: Definition) -> Result<(), CompileError> {
         match definition {
+            Definition::Variable { name } => {
+                // Check for duplicate
+                if self.dictionary.contains_key(&name) {
+                    return Err(CompileError::DuplicateDefinition(name));
+                }
+
+                // Variables push their address when called
+                // We'll use a special instruction that allocates and returns address
+                let instructions = vec![Instruction::VariableAddr(name.clone())];
+
+                let compiled = CompiledWord {
+                    name: name.clone(),
+                    instructions,
+                };
+                self.dictionary.insert(name, compiled);
+
+                Ok(())
+            }
+
             Definition::Word { name, body } => {
                 // Check for duplicate
                 if self.dictionary.contains_key(&name) {
@@ -234,6 +262,12 @@ impl Compiler {
                 self.current_instructions.push(Instruction::AllocString(s));
             }
 
+            Expression::DotQuote(s) => {
+                // ." string literal - allocate, then TYPE to print
+                self.current_instructions.push(Instruction::AllocString(s));
+                self.current_instructions.push(Instruction::Primitive(Primitive::Type));
+            }
+
             Expression::Recurse => {
                 // Emit a recursive call to the word currently being defined
                 if let Some(word_name) = &self.current_word_name {
@@ -246,6 +280,11 @@ impl Compiler {
             Expression::Exit => {
                 // EXIT causes early return from the current word
                 self.current_instructions.push(Instruction::Return);
+            }
+
+            Expression::Bye => {
+                // BYE exits the program
+                self.current_instructions.push(Instruction::Bye);
             }
 
             Expression::WordCall(word) => {
@@ -487,6 +526,7 @@ impl Compiler {
 pub struct Executor {
     vm: VM,
     compiler: Compiler,
+    variables: HashMap<String, i64>, // variable name -> memory address
 }
 
 impl Executor {
@@ -494,6 +534,7 @@ impl Executor {
         Executor {
             vm: VM::new(),
             compiler: Compiler::new(),
+            variables: HashMap::new(),
         }
     }
 
@@ -504,8 +545,11 @@ impl Executor {
         // Load stdlib.fth from the embedded file
         const STDLIB: &str = include_str!("stdlib.fth");
 
+        // Convert to uppercase for case-insensitive word matching
+        let stdlib_upper = STDLIB.to_uppercase();
+
         // Parse and compile the standard library
-        let mut lexer = crate::lexer::Lexer::new(STDLIB);
+        let mut lexer = crate::lexer::Lexer::new(&stdlib_upper);
         let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
 
         let mut parser = crate::parser::Parser::new(tokens);
@@ -680,6 +724,26 @@ impl Executor {
                     self.vm.data_stack.push(addr);
                     self.vm.data_stack.push(len);
                     pc += 1;
+                }
+
+                Instruction::VariableAddr(name) => {
+                    // Get or allocate address for variable
+                    let addr = if let Some(&existing_addr) = self.variables.get(name) {
+                        existing_addr
+                    } else {
+                        // Allocate 8 bytes for the variable (i64)
+                        let addr = self.vm.here as i64;
+                        self.vm.here += 8;
+                        self.variables.insert(name.clone(), addr);
+                        addr
+                    };
+                    self.vm.data_stack.push(addr);
+                    pc += 1;
+                }
+
+                Instruction::Bye => {
+                    // Exit the program
+                    std::process::exit(0);
                 }
             }
         }
@@ -1477,5 +1541,294 @@ mod tests {
 
         // Stack should be empty
         assert_eq!(executor.vm().data_stack.depth(), 0);
+    }
+
+    #[test]
+    fn test_variable_basic() {
+        let mut executor = Executor::new();
+
+        // Create a variable and store/fetch a value
+        let source = "VARIABLE X";
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // X should push its address onto the stack
+        executor.execute_word("X").unwrap();
+        assert_eq!(executor.vm().data_stack.depth(), 1);
+        let addr = executor.vm_mut().data_stack.pop().unwrap();
+        assert!(addr > 0); // Address should be valid
+
+        // Store 42 at the variable's address
+        executor.vm_mut().data_stack.push(42);
+        executor.vm_mut().data_stack.push(addr);
+        executor.vm_mut().execute_primitive(crate::primitives::Primitive::Store).unwrap();
+
+        // Fetch the value back
+        executor.vm_mut().data_stack.push(addr);
+        executor.vm_mut().execute_primitive(crate::primitives::Primitive::Fetch).unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 42);
+    }
+
+    #[test]
+    fn test_variable_multiple() {
+        let mut executor = Executor::new();
+
+        // Create multiple variables
+        let source = "VARIABLE X VARIABLE Y VARIABLE Z";
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // Get addresses of all three variables
+        executor.execute_word("X").unwrap();
+        let addr_x = executor.vm_mut().data_stack.pop().unwrap();
+
+        executor.execute_word("Y").unwrap();
+        let addr_y = executor.vm_mut().data_stack.pop().unwrap();
+
+        executor.execute_word("Z").unwrap();
+        let addr_z = executor.vm_mut().data_stack.pop().unwrap();
+
+        // Addresses should be different
+        assert_ne!(addr_x, addr_y);
+        assert_ne!(addr_y, addr_z);
+        assert_ne!(addr_x, addr_z);
+
+        // Each variable should be 8 bytes apart (size of i64)
+        assert_eq!(addr_y - addr_x, 8);
+        assert_eq!(addr_z - addr_y, 8);
+    }
+
+    #[test]
+    fn test_variable_in_word() {
+        let mut executor = Executor::new();
+
+        // Create variable and define word to use it
+        let source = r#"
+            VARIABLE COUNTER
+            : INC ( -- ) COUNTER @ 1 + COUNTER ! ;
+            : GET ( -- n ) COUNTER @ ;
+        "#;
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // Initialize counter to 0
+        executor.execute_word("COUNTER").unwrap();
+        let addr = executor.vm_mut().data_stack.pop().unwrap();
+        executor.vm_mut().data_stack.push(0);
+        executor.vm_mut().data_stack.push(addr);
+        executor.vm_mut().execute_primitive(crate::primitives::Primitive::Store).unwrap();
+
+        // Get initial value
+        executor.execute_word("GET").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 0);
+
+        // Increment three times
+        executor.execute_word("INC").unwrap();
+        executor.execute_word("INC").unwrap();
+        executor.execute_word("INC").unwrap();
+
+        // Check value is now 3
+        executor.execute_word("GET").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 3);
+    }
+
+    #[test]
+    fn test_variable_persistence() {
+        let mut executor = Executor::new();
+
+        // Create variable
+        let source = "VARIABLE DATA";
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // Store value
+        executor.execute_word("DATA").unwrap();
+        let addr = executor.vm_mut().data_stack.pop().unwrap();
+        executor.vm_mut().data_stack.push(12345);
+        executor.vm_mut().data_stack.push(addr);
+        executor.vm_mut().execute_primitive(crate::primitives::Primitive::Store).unwrap();
+
+        // Execute DATA again - should get same address
+        executor.execute_word("DATA").unwrap();
+        let addr2 = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(addr, addr2);
+
+        // Value should still be there
+        executor.vm_mut().data_stack.push(addr);
+        executor.vm_mut().execute_primitive(crate::primitives::Primitive::Fetch).unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 12345);
+    }
+
+    #[test]
+    fn test_variable_with_loop() {
+        let mut executor = Executor::new();
+
+        // Use variable as accumulator in loop
+        let source = r#"
+            VARIABLE SUM
+            : SUMTO ( n -- )
+                0 SUM !
+                0 DO I SUM @ + SUM ! LOOP
+            ;
+        "#;
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // Sum 0 to 9 (should be 45)
+        executor.vm_mut().data_stack.push(10);
+        executor.execute_word("SUMTO").unwrap();
+
+        // Fetch the sum
+        executor.execute_word("SUM").unwrap();
+        let addr = executor.vm_mut().data_stack.pop().unwrap();
+        executor.vm_mut().data_stack.push(addr);
+        executor.vm_mut().execute_primitive(crate::primitives::Primitive::Fetch).unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 45);
+    }
+
+    #[test]
+    fn test_depth_basic() {
+        let mut executor = Executor::new();
+
+        // Empty stack
+        let source = "DEPTH";
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_depth_with_values() {
+        let mut executor = Executor::new();
+
+        // Push 3 values, then check depth
+        let source = "1 2 3 DEPTH";
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // Should have pushed depth (3) on top
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 3);
+        // Original values still there
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 3);
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 2);
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 1);
+    }
+
+    #[test]
+    fn test_depth_in_word() {
+        let mut executor = Executor::new();
+
+        // Define word that uses DEPTH
+        let source = ": HOWMANY ( ... -- ... n ) DEPTH ;";
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // Test with different stack depths
+        executor.execute_word("HOWMANY").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 0);
+
+        executor.vm_mut().data_stack.push(1);
+        executor.vm_mut().data_stack.push(2);
+        executor.execute_word("HOWMANY").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 2);
+    }
+
+    #[test]
+    fn test_dotquote_basic() {
+        let mut executor = Executor::new();
+
+        // Test basic ." printing
+        let source = r#"." Hello""#;
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // Stack should be empty (." prints and consumes)
+        assert_eq!(executor.vm().data_stack.depth(), 0);
+    }
+
+    #[test]
+    fn test_dotquote_in_word() {
+        let mut executor = Executor::new();
+
+        // Define word that uses ."
+        let source = r#": GREET ." Hello, World!" ;"#;
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // Execute the word
+        executor.execute_word("GREET").unwrap();
+
+        // Stack should be empty
+        assert_eq!(executor.vm().data_stack.depth(), 0);
+    }
+
+    #[test]
+    fn test_dotquote_multiple() {
+        let mut executor = Executor::new();
+
+        // Multiple ." statements
+        let source = r#"." First" ." Second" ." Third""#;
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // Stack should be empty
+        assert_eq!(executor.vm().data_stack.depth(), 0);
+    }
+
+    #[test]
+    fn test_fetch_store_primitives() {
+        let mut executor = Executor::new();
+
+        // Test @ and ! are available as words
+        let source = "42 100 !";
+        let mut lexer = crate::lexer::Lexer::new(source);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // Fetch it back
+        let source2 = "100 @";
+        let mut lexer2 = crate::lexer::Lexer::new(source2);
+        let tokens2 = lexer2.tokenize().unwrap();
+        let mut parser2 = crate::parser::Parser::new(tokens2);
+        let program2 = parser2.parse().unwrap();
+        executor.execute_program(program2).unwrap();
+
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 42);
     }
 }

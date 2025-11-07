@@ -169,11 +169,14 @@ fn load_file(executor: &mut Executor, file_path: &str) -> std::result::Result<()
     let contents = fs::read_to_string(file_path)
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
-    // Convert to uppercase for case-insensitive word matching (same as REPL input)
-    let contents = contents.to_uppercase();
+    // Manually handle INCLUDE statements by preprocessing (before uppercasing)
+    let processed = preprocess_includes(&contents, file_path)?;
+
+    // Convert to uppercase for case-insensitive word matching
+    let processed_upper = processed.to_uppercase();
 
     // Process the file
-    let mut lexer = Lexer::new(&contents);
+    let mut lexer = Lexer::new(&processed_upper);
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
 
     let mut parser = Parser::new(tokens);
@@ -182,6 +185,51 @@ fn load_file(executor: &mut Executor, file_path: &str) -> std::result::Result<()
     executor.execute_program(program)?;
 
     Ok(())
+}
+
+fn preprocess_includes(contents: &str, base_path: &str) -> std::result::Result<String, String> {
+    let mut result = String::new();
+
+    for line in contents.lines() {
+        let trimmed = line.trim();
+        let upper_trimmed = trimmed.to_uppercase();
+        if upper_trimmed.starts_with("INCLUDE ") {
+            // Extract the file path (preserve original case for filesystem)
+            let include_path = trimmed[8..].trim();
+
+            // Try the path as-is first (relative to cwd or absolute)
+            let full_path = if std::path::Path::new(include_path).is_absolute() {
+                include_path.to_string()
+            } else if std::path::Path::new(include_path).exists() {
+                // Path exists relative to cwd
+                include_path.to_string()
+            } else {
+                // Try relative to the including file's directory
+                let base_dir = std::path::Path::new(base_path)
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."));
+                let relative_path = base_dir.join(include_path);
+                if relative_path.exists() {
+                    relative_path.to_string_lossy().to_string()
+                } else {
+                    // Fall back to original path (will error with better message)
+                    include_path.to_string()
+                }
+            };
+
+            // Recursively load the included file
+            let included_contents = fs::read_to_string(&full_path)
+                .map_err(|e| format!("Failed to include {}: {}", full_path, e))?;
+            let processed_included = preprocess_includes(&included_contents, &full_path)?;
+            result.push_str(&processed_included);
+            result.push('\n');
+        } else {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+
+    Ok(result)
 }
 
 fn process_input(executor: &mut Executor, input: &str) -> std::result::Result<(), String> {

@@ -165,6 +165,9 @@ pub enum Primitive {
 
     // Loop
     I,          // I ( -- n ) Get current loop index
+
+    // Stack inspection
+    Depth,      // DEPTH ( -- n ) Get number of items on data stack
 }
 
 impl Primitive {
@@ -200,6 +203,7 @@ impl Primitive {
             Primitive::Cr => "CR",
             Primitive::Type => "TYPE",
             Primitive::I => "I",
+            Primitive::Depth => "DEPTH",
         }
     }
 }
@@ -292,6 +296,9 @@ impl VM {
 
             // Loop counter
             Primitive::I => self.op_i(),
+
+            // Stack inspection
+            Primitive::Depth => self.op_depth(),
         }
     }
 
@@ -605,6 +612,18 @@ impl VM {
         let index = self.loop_stack.get(self.loop_stack.depth() - 1)
             .ok_or(ForthError::StackUnderflow)?;
         self.data_stack.push(index);
+        Ok(())
+    }
+
+    // ========================================================================
+    // STACK INSPECTION
+    // ========================================================================
+
+    fn op_depth(&mut self) -> Result<(), ForthError> {
+        // DEPTH ( -- n )
+        // Push the number of items on the data stack
+        let depth = self.data_stack.depth() as i64;
+        self.data_stack.push(depth);
         Ok(())
     }
 }
@@ -1032,5 +1051,49 @@ mod tests {
         assert_eq!(vm.data_stack.pop().unwrap(), 7);
         assert_eq!(vm.data_stack.pop().unwrap(), 7);
         assert_eq!(vm.data_stack.pop().unwrap(), 7);
+    }
+
+    #[test]
+    fn test_depth_empty() {
+        let mut vm = VM::new();
+
+        // Empty stack should have depth 0
+        vm.execute_primitive(Primitive::Depth).unwrap();
+        assert_eq!(vm.data_stack.pop().unwrap(), 0);
+    }
+
+    #[test]
+    fn test_depth_with_items() {
+        let mut vm = VM::new();
+
+        // Push some values
+        vm.data_stack.push(10);
+        vm.data_stack.push(20);
+        vm.data_stack.push(30);
+
+        // DEPTH should return 3
+        vm.execute_primitive(Primitive::Depth).unwrap();
+        assert_eq!(vm.data_stack.pop().unwrap(), 3);
+
+        // Stack should still have original 3 items
+        assert_eq!(vm.data_stack.depth(), 3);
+    }
+
+    #[test]
+    fn test_depth_incremental() {
+        let mut vm = VM::new();
+
+        // Check depth at each step
+        vm.execute_primitive(Primitive::Depth).unwrap();
+        assert_eq!(vm.data_stack.pop().unwrap(), 0);
+
+        vm.data_stack.push(1);
+        vm.execute_primitive(Primitive::Depth).unwrap();
+        assert_eq!(vm.data_stack.pop().unwrap(), 1);
+
+        vm.data_stack.push(2);
+        vm.data_stack.push(3);
+        vm.execute_primitive(Primitive::Depth).unwrap();
+        assert_eq!(vm.data_stack.pop().unwrap(), 3);
     }
 }

@@ -30,7 +30,7 @@
 
 : 3DUP ( x1 x2 x3 -- x1 x2 x3 x1 x2 x3 )
   DUP 2OVER ROT ;
-
+  
 \ ============================================================================
 \ ARITHMETIC
 \ ============================================================================
@@ -83,3 +83,6 @@
 \ Note: FACTORIAL would need proper recursion support
 \ : FACTORIAL ( n -- n! )
 \   DUP 1 <= IF DROP 1 ELSE DUP 1 - FACTORIAL * THEN ;
+
+: PICK ( x0 i*x u.i -- x0 i*x x0 )
+  DUP 0= if DROP DUP exit then  SWAP >R 1- RECURSE R> SWAP ;
