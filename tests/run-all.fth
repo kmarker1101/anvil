@@ -15,6 +15,7 @@ INIT-TESTS
 \ Run all test suites
 INCLUDE tests/arithmetic.fth
 INCLUDE tests/stack.fth
+INCLUDE tests/compare.fth
 
 \ Add more test files here as they are created:
 \ INCLUDE forth/tests/definitions.fth
