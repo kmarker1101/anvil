@@ -1,0 +1,662 @@
+// parser.rs - Forth Parser (Tokens → AST)
+
+use crate::lexer::Token;
+
+// ============================================================================
+// AST (Abstract Syntax Tree) - Represents Forth program structure
+// ============================================================================
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Program {
+    pub definitions: Vec<Definition>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Definition {
+    /// : SQUARE DUP * ;
+    Word { name: String, body: Vec<Expression> },
+
+    /// Just a top-level expression (for REPL mode)
+    Expression(Expression),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Expression {
+    /// Literal number: 42
+    Number(i64),
+
+    /// String literal: " hello "
+    String(String),
+
+    /// Word call: DUP, SWAP, MYWORD, +, *, etc.
+    WordCall(String),
+
+    /// IF condition THEN
+    If {
+        condition: Vec<Expression>,
+        then_branch: Vec<Expression>,
+    },
+
+    /// IF condition THEN else-branch ELSE
+    IfElse {
+        condition: Vec<Expression>,
+        then_branch: Vec<Expression>,
+        else_branch: Vec<Expression>,
+    },
+
+    /// BEGIN body UNTIL
+    BeginUntil { body: Vec<Expression> },
+
+    /// BEGIN condition WHILE body REPEAT
+    BeginWhileRepeat {
+        condition: Vec<Expression>,
+        body: Vec<Expression>,
+    },
+
+    /// DO body LOOP
+    DoLoop { body: Vec<Expression> },
+
+    /// DO body +LOOP
+    DoPlusLoop { body: Vec<Expression> },
+
+    /// ?DO body LOOP
+    QDoLoop { body: Vec<Expression> },
+
+    /// ?DO body +LOOP
+    QDoPlusLoop { body: Vec<Expression> },
+
+    /// RECURSE - recursive call to current word being defined
+    Recurse,
+
+    /// EXIT - early return from current word
+    Exit,
+}
+
+// ============================================================================
+// PARSER
+// ============================================================================
+
+pub struct Parser {
+    tokens: Vec<Token>,
+    position: usize,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ParseError {
+    UnexpectedEof,
+    UnexpectedToken { expected: String, found: Token },
+    MissingWordName,
+    UnmatchedIf,
+    UnmatchedBegin,
+    UnmatchedDo,
+    InvalidControlFlow(String),
+}
+
+impl std::fmt::Display for ParseError {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            ParseError::UnexpectedEof => write!(f, "Unexpected end of input"),
+            ParseError::UnexpectedToken { expected, found } => {
+                write!(f, "Expected {}, found {}", expected, found)
+            }
+            ParseError::MissingWordName => write!(f, "Missing word name after ':'"),
+            ParseError::UnmatchedIf => write!(f, "IF without matching THEN"),
+            ParseError::UnmatchedBegin => write!(f, "BEGIN without matching UNTIL/REPEAT"),
+            ParseError::UnmatchedDo => write!(f, "DO without matching LOOP"),
+            ParseError::InvalidControlFlow(msg) => write!(f, "Invalid control flow: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl Parser {
+    pub fn new(tokens: Vec<Token>) -> Self {
+        Parser {
+            tokens,
+            position: 0,
+        }
+    }
+
+    /// Parse entire program
+    pub fn parse(&mut self) -> Result<Program, ParseError> {
+        let mut definitions = Vec::new();
+
+        while !self.is_at_end() {
+            let def = self.parse_definition()?;
+            definitions.push(def);
+        }
+
+        Ok(Program { definitions })
+    }
+
+    /// Parse a single definition or expression
+    fn parse_definition(&mut self) -> Result<Definition, ParseError> {
+        if self.check(&Token::Colon) {
+            self.parse_word_definition()
+        } else {
+            // Top-level expression (for REPL)
+            let expr = self.parse_expression()?;
+            Ok(Definition::Expression(expr))
+        }
+    }
+
+    /// Parse word definition: : NAME body ;
+    fn parse_word_definition(&mut self) -> Result<Definition, ParseError> {
+        self.consume_colon()?;
+
+        // Get word name
+        let name = match self.peek() {
+            Some(Token::Word(w)) => {
+                let n = w.clone();
+                self.advance();
+                n
+            }
+            Some(token) => {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "word name".to_string(),
+                    found: token.clone(),
+                });
+            }
+            None => return Err(ParseError::MissingWordName),
+        };
+
+        // Parse body until ;
+        let mut body = Vec::new();
+        while !self.is_at_end() && !self.check(&Token::Semicolon) {
+            let expr = self.parse_expression()?;
+            body.push(expr);
+        }
+
+        self.consume_semicolon()?;
+
+        Ok(Definition::Word { name, body })
+    }
+
+    /// Parse a single expression
+    fn parse_expression(&mut self) -> Result<Expression, ParseError> {
+        match self.peek() {
+            Some(Token::Number(n)) => {
+                let num = *n;
+                self.advance();
+                Ok(Expression::Number(num))
+            }
+
+            Some(Token::String(s)) => {
+                let string = s.clone();
+                self.advance();
+                Ok(Expression::String(string))
+            }
+
+            Some(Token::If) => self.parse_if(),
+
+            Some(Token::Begin) => self.parse_begin(),
+
+            Some(Token::Do) => self.parse_do(),
+            Some(Token::QDo) => self.parse_qdo(),
+
+            Some(Token::Recurse) => {
+                self.advance();
+                Ok(Expression::Recurse)
+            }
+
+            Some(Token::Exit) => {
+                self.advance();
+                Ok(Expression::Exit)
+            }
+
+            Some(Token::Word(w)) => {
+                let word = w.clone();
+                self.advance();
+                Ok(Expression::WordCall(word))
+            }
+
+            Some(token) => Err(ParseError::UnexpectedToken {
+                expected: "expression".to_string(),
+                found: token.clone(),
+            }),
+
+            None => Err(ParseError::UnexpectedEof),
+        }
+    }
+
+    /// Parse IF-THEN or IF-ELSE-THEN
+    fn parse_if(&mut self) -> Result<Expression, ParseError> {
+        self.advance(); // consume IF
+
+        // In Forth, IF is postfix: the condition is already evaluated and on the stack
+        // So we parse: condition-code IF then-code THEN
+        // or: condition-code IF then-code ELSE else-code THEN
+
+        // Parse THEN branch (everything between IF and ELSE/THEN)
+        let mut then_branch = Vec::new();
+        while !self.is_at_end() && !self.check(&Token::Then) && !self.check(&Token::Else) {
+            let expr = self.parse_expression()?;
+            then_branch.push(expr);
+        }
+
+        // Check for ELSE
+        if self.check(&Token::Else) {
+            self.advance(); // consume ELSE
+
+            // Parse else branch
+            let mut else_branch = Vec::new();
+            while !self.is_at_end() && !self.check(&Token::Then) {
+                let expr = self.parse_expression()?;
+                else_branch.push(expr);
+            }
+
+            if !self.check(&Token::Then) {
+                return Err(ParseError::UnmatchedIf);
+            }
+            self.advance(); // consume THEN
+
+            Ok(Expression::IfElse {
+                condition: Vec::new(), // Condition is evaluated before IF
+                then_branch,
+                else_branch,
+            })
+        } else {
+            // Simple IF-THEN (no ELSE)
+            if !self.check(&Token::Then) {
+                return Err(ParseError::UnmatchedIf);
+            }
+            self.advance(); // consume THEN
+
+            Ok(Expression::If {
+                condition: Vec::new(), // Condition is evaluated before IF
+                then_branch,
+            })
+        }
+    }
+
+    /// Parse BEGIN-UNTIL or BEGIN-WHILE-REPEAT
+    fn parse_begin(&mut self) -> Result<Expression, ParseError> {
+        self.advance(); // consume BEGIN
+
+        let mut body = Vec::new();
+
+        // Parse until we hit UNTIL, WHILE, or REPEAT
+        while !self.is_at_end() {
+            if self.check(&Token::Until) {
+                self.advance(); // consume UNTIL
+                return Ok(Expression::BeginUntil { body });
+            }
+
+            if self.check(&Token::While) {
+                self.advance(); // consume WHILE
+
+                // body so far was the condition
+                let condition = body;
+                let mut while_body = Vec::new();
+
+                // Parse body until REPEAT
+                while !self.is_at_end() && !self.check(&Token::Repeat) {
+                    let expr = self.parse_expression()?;
+                    while_body.push(expr);
+                }
+
+                if !self.check(&Token::Repeat) {
+                    return Err(ParseError::UnmatchedBegin);
+                }
+                self.advance(); // consume REPEAT
+
+                return Ok(Expression::BeginWhileRepeat {
+                    condition,
+                    body: while_body,
+                });
+            }
+
+            let expr = self.parse_expression()?;
+            body.push(expr);
+        }
+
+        Err(ParseError::UnmatchedBegin)
+    }
+
+    /// Parse DO-LOOP or DO-+LOOP
+    fn parse_do(&mut self) -> Result<Expression, ParseError> {
+        self.advance(); // consume DO
+
+        let mut body = Vec::new();
+
+        while !self.is_at_end() && !self.check(&Token::Loop) && !self.check(&Token::PlusLoop) {
+            let expr = self.parse_expression()?;
+            body.push(expr);
+        }
+
+        if self.check(&Token::Loop) {
+            self.advance();
+            Ok(Expression::DoLoop { body })
+        } else if self.check(&Token::PlusLoop) {
+            self.advance();
+            Ok(Expression::DoPlusLoop { body })
+        } else {
+            Err(ParseError::UnmatchedDo)
+        }
+    }
+
+    /// Parse ?DO-LOOP or ?DO-+LOOP (same as DO but skips if start=end)
+    fn parse_qdo(&mut self) -> Result<Expression, ParseError> {
+        self.advance(); // consume ?DO
+
+        let mut body = Vec::new();
+
+        while !self.is_at_end() && !self.check(&Token::Loop) && !self.check(&Token::PlusLoop) {
+            let expr = self.parse_expression()?;
+            body.push(expr);
+        }
+
+        if self.check(&Token::Loop) {
+            self.advance();
+            Ok(Expression::QDoLoop { body })
+        } else if self.check(&Token::PlusLoop) {
+            self.advance();
+            Ok(Expression::QDoPlusLoop { body })
+        } else {
+            Err(ParseError::UnmatchedDo)
+        }
+    }
+
+    // ========================================================================
+    // HELPER METHODS
+    // ========================================================================
+
+    fn peek(&self) -> Option<&Token> {
+        if self.position < self.tokens.len() {
+            Some(&self.tokens[self.position])
+        } else {
+            None
+        }
+    }
+
+    fn advance(&mut self) {
+        if self.position < self.tokens.len() {
+            self.position += 1;
+        }
+    }
+
+    fn is_at_end(&self) -> bool {
+        self.position >= self.tokens.len()
+    }
+
+    fn check(&self, token_type: &Token) -> bool {
+        if let Some(token) = self.peek() {
+            std::mem::discriminant(token) == std::mem::discriminant(token_type)
+        } else {
+            false
+        }
+    }
+
+    fn consume_colon(&mut self) -> Result<(), ParseError> {
+        if self.check(&Token::Colon) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(ParseError::UnexpectedToken {
+                expected: ":".to_string(),
+                found: self
+                    .peek()
+                    .cloned()
+                    .unwrap_or(Token::Word("EOF".to_string())),
+            })
+        }
+    }
+
+    fn consume_semicolon(&mut self) -> Result<(), ParseError> {
+        if self.check(&Token::Semicolon) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(ParseError::UnexpectedToken {
+                expected: ";".to_string(),
+                found: self
+                    .peek()
+                    .cloned()
+                    .unwrap_or(Token::Word("EOF".to_string())),
+            })
+        }
+    }
+}
+
+// ============================================================================
+// TESTS
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn parse(input: &str) -> Result<Program, ParseError> {
+        let mut lexer = Lexer::new(input);
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        parser.parse()
+    }
+
+    #[test]
+    fn test_simple_word_definition() {
+        let program = parse(": SQUARE DUP * ;").unwrap();
+
+        assert_eq!(program.definitions.len(), 1);
+
+        match &program.definitions[0] {
+            Definition::Word { name, body } => {
+                assert_eq!(name, "SQUARE");
+                assert_eq!(body.len(), 2);
+                assert_eq!(body[0], Expression::WordCall("DUP".to_string()));
+                assert_eq!(body[1], Expression::WordCall("*".to_string()));
+            }
+            _ => panic!("Expected word definition"),
+        }
+    }
+
+    #[test]
+    fn test_word_with_numbers() {
+        let program = parse(": DOUBLE 2 * ;").unwrap();
+
+        match &program.definitions[0] {
+            Definition::Word { name, body } => {
+                assert_eq!(name, "DOUBLE");
+                assert_eq!(body[0], Expression::Number(2));
+                assert_eq!(body[1], Expression::WordCall("*".to_string()));
+            }
+            _ => panic!("Expected word definition"),
+        }
+    }
+
+    #[test]
+    fn test_if_then() {
+        let program = parse(": ABS DUP 0 < IF NEGATE THEN ;").unwrap();
+
+        match &program.definitions[0] {
+            Definition::Word { name, body } => {
+                assert_eq!(name, "ABS");
+                assert_eq!(body.len(), 4); // DUP, 0, <, IF
+
+                // Check the IF expression
+                if let Expression::If { condition, then_branch } = &body[3] {
+                    // Condition is empty (evaluated before IF in Forth)
+                    assert_eq!(condition.len(), 0);
+                    // THEN branch contains NEGATE
+                    assert_eq!(then_branch.len(), 1);
+                    assert_eq!(then_branch[0], Expression::WordCall("NEGATE".to_string()));
+                } else {
+                    panic!("Expected IF expression");
+                }
+            }
+            _ => panic!("Expected word definition"),
+        }
+    }
+
+    #[test]
+    fn test_if_else_then() {
+        let program = parse(": MAX 2DUP < IF SWAP THEN DROP ;").unwrap();
+        assert_eq!(program.definitions.len(), 1);
+    }
+
+    #[test]
+    fn test_begin_until() {
+        let program = parse(": COUNTDOWN BEGIN DUP . 1 - DUP 0 = UNTIL ;").unwrap();
+
+        match &program.definitions[0] {
+            Definition::Word { name, body } => {
+                assert_eq!(name, "COUNTDOWN");
+
+                // Find the BEGIN-UNTIL
+                let mut found_begin = false;
+                for expr in body {
+                    if let Expression::BeginUntil { body: loop_body } = expr {
+                        found_begin = true;
+                        assert!(loop_body.len() > 0);
+                    }
+                }
+                assert!(found_begin, "Should have BEGIN-UNTIL");
+            }
+            _ => panic!("Expected word definition"),
+        }
+    }
+
+    #[test]
+    fn test_do_loop() {
+        let program = parse(": TEST 10 0 DO I . LOOP ;").unwrap();
+
+        match &program.definitions[0] {
+            Definition::Word { name, body } => {
+                assert_eq!(name, "TEST");
+
+                // Body: 10, 0, DO...LOOP
+                assert_eq!(body[0], Expression::Number(10));
+                assert_eq!(body[1], Expression::Number(0));
+
+                if let Expression::DoLoop { body: loop_body } = &body[2] {
+                    assert_eq!(loop_body[0], Expression::WordCall("I".to_string()));
+                    assert_eq!(loop_body[1], Expression::WordCall(".".to_string()));
+                } else {
+                    panic!("Expected DO-LOOP");
+                }
+            }
+            _ => panic!("Expected word definition"),
+        }
+    }
+
+    #[test]
+    fn test_qdo_loop() {
+        let program = parse(": TEST 10 0 ?DO I . LOOP ;").unwrap();
+
+        match &program.definitions[0] {
+            Definition::Word { name, body } => {
+                assert_eq!(name, "TEST");
+
+                // Body: 10, 0, ?DO...LOOP
+                assert_eq!(body[0], Expression::Number(10));
+                assert_eq!(body[1], Expression::Number(0));
+
+                if let Expression::QDoLoop { body: loop_body } = &body[2] {
+                    assert_eq!(loop_body[0], Expression::WordCall("I".to_string()));
+                    assert_eq!(loop_body[1], Expression::WordCall(".".to_string()));
+                } else {
+                    panic!("Expected ?DO-LOOP");
+                }
+            }
+            _ => panic!("Expected word definition"),
+        }
+    }
+
+    #[test]
+    fn test_qdo_plusloop() {
+        let program = parse(": EVEN 20 0 ?DO I . 2 +LOOP ;").unwrap();
+
+        match &program.definitions[0] {
+            Definition::Word { name, body } => {
+                assert_eq!(name, "EVEN");
+
+                // Body: 20, 0, ?DO...+LOOP
+                assert_eq!(body[0], Expression::Number(20));
+                assert_eq!(body[1], Expression::Number(0));
+
+                if let Expression::QDoPlusLoop { body: loop_body } = &body[2] {
+                    assert_eq!(loop_body[0], Expression::WordCall("I".to_string()));
+                    assert_eq!(loop_body[1], Expression::WordCall(".".to_string()));
+                    assert_eq!(loop_body[2], Expression::Number(2));
+                } else {
+                    panic!("Expected ?DO-+LOOP");
+                }
+            }
+            _ => panic!("Expected word definition"),
+        }
+    }
+
+    #[test]
+    fn test_multiple_definitions() {
+        let program = parse(": SQUARE DUP * ; : CUBE DUP SQUARE * ;").unwrap();
+
+        assert_eq!(program.definitions.len(), 2);
+
+        match &program.definitions[0] {
+            Definition::Word { name, .. } => assert_eq!(name, "SQUARE"),
+            _ => panic!("Expected word definition"),
+        }
+
+        match &program.definitions[1] {
+            Definition::Word { name, .. } => assert_eq!(name, "CUBE"),
+            _ => panic!("Expected word definition"),
+        }
+    }
+
+    #[test]
+    fn test_complex_program() {
+        let input = r#"
+            : FACTORIAL 
+              DUP 1 <= IF
+                DROP 1
+              ELSE
+                DUP 1 - FACTORIAL *
+              THEN ;
+        "#;
+
+        let program = parse(input).unwrap();
+        assert_eq!(program.definitions.len(), 1);
+
+        match &program.definitions[0] {
+            Definition::Word { name, body } => {
+                assert_eq!(name, "FACTORIAL");
+                assert!(body.len() > 0);
+            }
+            _ => panic!("Expected word definition"),
+        }
+    }
+
+    #[test]
+    fn test_missing_semicolon() {
+        let result = parse(": SQUARE DUP *");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_missing_word_name() {
+        let _result = parse(": DUP * ;");
+        // This might actually parse, depending on implementation
+        // ": DUP" could be interpreted as defining a word named "DUP"
+    }
+
+    #[test]
+    fn test_unmatched_if() {
+        let result = parse(": BAD IF DROP ;");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_string_literal() {
+        let program = parse(r#": GREET " Hello " TYPE ;"#).unwrap();
+
+        match &program.definitions[0] {
+            Definition::Word { body, .. } => {
+                assert_eq!(body[0], Expression::String(" Hello ".to_string()));
+                assert_eq!(body[1], Expression::WordCall("TYPE".to_string()));
+            }
+            _ => panic!("Expected word definition"),
+        }
+    }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "anvil"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "forth"
+path = "src/lib.rs"
+
+[[bin]]
+name = "forth"
+path = "src/main.rs"
+
+[dependencies]
+rustyline = "17.0"
+dirs = "5.0"

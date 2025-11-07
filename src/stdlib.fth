@@ -1,0 +1,85 @@
+\ stdlib.fth - Forth Standard Library
+\ These are words built from primitives
+
+\ ============================================================================
+\ STACK OPERATIONS
+\ ============================================================================
+
+: 2DUP ( a b -- a b a b ) OVER OVER ;
+
+: 2DROP ( a b -- ) DROP DROP ;
+
+: NIP ( a b -- b ) SWAP DROP ;
+
+: TUCK ( a b -- b a b ) SWAP OVER ;
+
+: 3DROP ( x1 x2 x3 -- )
+  DROP DROP DROP ;
+
+: ?DUP ( x1 -- x1 x1 | 0 )
+  DUP IF DUP THEN ;
+
+: -ROT ( x1 x2 x3 -- x3 x1 x2 )
+  ROT ROT ;
+
+: 2OVER ( x1 x2 x3 x4 -- x1 x2 x3 x4 x1 x2 )
+  >R >R 2DUP R> ROT ROT R> ROT ROT ;
+
+: 2SWAP ( x1 x2 x3 x4 -- x3 x4 x1 x2 )
+  >R ROT ROT R> ROT ROT ;
+
+: 3DUP ( x1 x2 x3 -- x1 x2 x3 x1 x2 x3 )
+  DUP 2OVER ROT ;
+
+\ ============================================================================
+\ ARITHMETIC
+\ ============================================================================
+
+: NEGATE ( n -- -n ) 0 SWAP - ;
+: 1+ ( n -- n+1 ) 1 + ;
+: 1- ( n -- n-1 ) 1 - ;
+: 2* ( n -- n*2 ) DUP + ;
+: 2/ ( n -- n/2 ) 2 / ;
+: */ ( n1 n2 n3 -- n4 ) >R * R> / ;
+
+: ABS ( n -- |n| ) 
+  DUP 0 < IF NEGATE THEN ;
+
+: MIN ( a b -- min ) 
+  2DUP < IF DROP ELSE NIP THEN ;
+
+: MAX ( a b -- max ) 
+  2DUP > IF DROP ELSE NIP THEN ;
+
+\ ============================================================================
+\ COMPARISON
+\ ============================================================================
+
+: 0= ( n -- flag ) 0 = ;
+: 0< ( n -- flag ) 0 < ;
+: 0> ( n -- flag ) 0 > ;
+: 0<> ( n -- flag ) 0= 0= ;
+
+\ ============================================================================
+\ BOOLEAN
+\ ============================================================================
+
+: TRUE ( -- -1 ) -1 ;
+: FALSE ( -- 0 ) 0 ;
+
+\ ============================================================================
+\ MEMORY HELPERS
+\ ============================================================================
+
+: +! ( n addr -- ) DUP @ ROT + SWAP ! ;
+
+\ ============================================================================
+\ USEFUL EXAMPLES
+\ ============================================================================
+
+\ : SQUARE ( n -- n^2 ) DUP * ;
+\ : CUBE ( n -- n^3 ) DUP SQUARE * ;
+
+\ Note: FACTORIAL would need proper recursion support
+\ : FACTORIAL ( n -- n! )
+\   DUP 1 <= IF DROP 1 ELSE DUP 1 - FACTORIAL * THEN ;
