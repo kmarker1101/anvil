@@ -23,14 +23,17 @@
   ROT ROT ;
 
 : 2OVER ( x1 x2 x3 x4 -- x1 x2 x3 x4 x1 x2 )
-  >R >R 2DUP R> ROT ROT R> ROT ROT ;
+  >R >R OVER OVER R> ROT ROT R> ROT ROT ;
 
 : 2SWAP ( x1 x2 x3 x4 -- x3 x4 x1 x2 )
   >R ROT ROT R> ROT ROT ;
 
 : 3DUP ( x1 x2 x3 -- x1 x2 x3 x1 x2 x3 )
   DUP 2OVER ROT ;
-  
+
+: PICK ( x0 i*x u.i -- x0 i*x x0 )
+  DUP 0 = if DROP DUP exit then  SWAP >R 1 - RECURSE R> SWAP ;
+
 \ ============================================================================
 \ ARITHMETIC
 \ ============================================================================
@@ -43,13 +46,13 @@
 : */ ( n1 n2 n3 -- n4 ) >R * R> / ;
 
 : ABS ( n -- |n| ) 
-  DUP 0 < IF NEGATE THEN ;
+  DUP 0 < IF 0 SWAP - THEN ;
 
 : MIN ( a b -- min ) 
-  2DUP < IF DROP ELSE NIP THEN ;
+  2DUP < IF DROP ELSE SWAP DROP THEN ;
 
 : MAX ( a b -- max ) 
-  2DUP > IF DROP ELSE NIP THEN ;
+  2DUP > IF DROP ELSE SWAP DROP THEN ;
 
 \ ============================================================================
 \ COMPARISON
@@ -86,6 +89,3 @@
 \ Note: FACTORIAL would need proper recursion support
 \ : FACTORIAL ( n -- n! )
 \   DUP 1 <= IF DROP 1 ELSE DUP 1 - FACTORIAL * THEN ;
-
-: PICK ( x0 i*x u.i -- x0 i*x x0 )
-  DUP 0= if DROP DUP exit then  SWAP >R 1- RECURSE R> SWAP ;
