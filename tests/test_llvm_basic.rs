@@ -204,8 +204,8 @@ fn test_llvm_do_loop() {
 
     // Should have pushed 0-9 onto stack
     assert_eq!(data_len, 10);
-    for i in 0..10 {
-        assert_eq!(data_stack[i], i as i64);
+    for (i, &value) in data_stack.iter().enumerate().take(10) {
+        assert_eq!(value, i as i64);
     }
 }
 

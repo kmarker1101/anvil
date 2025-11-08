@@ -581,11 +581,11 @@ impl Executor {
                 _ => None,
             };
 
-            if let Some(name) = name {
-                if self.compiler.get_word(name).is_some() {
-                    // This is a redefinition - warn the user
-                    print!("Warning: redefining {} ", name.to_uppercase());
-                }
+            if let Some(name) = name
+                && self.compiler.get_word(name).is_some()
+            {
+                // This is a redefinition - warn the user
+                print!("Warning: redefining {} ", name.to_uppercase());
             }
         }
 
@@ -683,18 +683,18 @@ impl Executor {
 
         // Copy results back to VM
         self.vm.data_stack = crate::primitives::Stack::new();
-        for i in 0..data_len {
-            self.vm.data_stack.push(data_stack[i]);
+        for &value in data_stack.iter().take(data_len) {
+            self.vm.data_stack.push(value);
         }
 
         self.vm.return_stack = crate::primitives::ReturnStack::new();
-        for i in 0..return_len {
-            self.vm.return_stack.push(return_stack[i]);
+        for &value in return_stack.iter().take(return_len) {
+            self.vm.return_stack.push(value);
         }
 
         self.vm.loop_stack = crate::primitives::Stack::new();
-        for i in 0..loop_len {
-            self.vm.loop_stack.push(loop_stack[i]);
+        for &value in loop_stack.iter().take(loop_len) {
+            self.vm.loop_stack.push(value);
         }
 
         self.vm.memory.copy_from_slice(&memory);
@@ -763,18 +763,18 @@ impl Executor {
 
         // Copy results back to VM
         self.vm.data_stack = crate::primitives::Stack::new();
-        for i in 0..data_len {
-            self.vm.data_stack.push(data_stack[i]);
+        for &value in data_stack.iter().take(data_len) {
+            self.vm.data_stack.push(value);
         }
 
         self.vm.return_stack = crate::primitives::ReturnStack::new();
-        for i in 0..return_len {
-            self.vm.return_stack.push(return_stack[i]);
+        for &value in return_stack.iter().take(return_len) {
+            self.vm.return_stack.push(value);
         }
 
         self.vm.loop_stack = crate::primitives::Stack::new();
-        for i in 0..loop_len {
-            self.vm.loop_stack.push(loop_stack[i]);
+        for &value in loop_stack.iter().take(loop_len) {
+            self.vm.loop_stack.push(value);
         }
 
         self.vm.memory.copy_from_slice(&memory);

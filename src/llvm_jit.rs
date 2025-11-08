@@ -6,6 +6,8 @@
 //
 // All primitives are implemented as extern "C" functions and called from generated code.
 
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use inkwell::context::Context;
 use inkwell::builder::Builder;
 use inkwell::module::Module;
@@ -410,7 +412,7 @@ impl<'ctx> LLVMCompiler<'ctx> {
                     let target_idx = ((idx + 1) as isize + offset) as usize;
                     let next_idx = idx + 1;
                     if target_idx >= blocks.len() || next_idx >= blocks.len() {
-                        return Err(format!("Branch target out of bounds"));
+                        return Err("Branch target out of bounds".to_string());
                     }
 
                     self.builder.build_conditional_branch(is_zero, blocks[target_idx], blocks[next_idx])
@@ -422,7 +424,7 @@ impl<'ctx> LLVMCompiler<'ctx> {
                     // Offset is relative to next instruction (idx + 1)
                     let target_idx = ((idx + 1) as isize + offset) as usize;
                     if target_idx >= blocks.len() {
-                        return Err(format!("Branch target out of bounds"));
+                        return Err("Branch target out of bounds".to_string());
                     }
                     self.builder.build_unconditional_branch(blocks[target_idx])
                         .map_err(|e| format!("Failed to build branch: {}", e))?;
@@ -477,7 +479,7 @@ impl<'ctx> LLVMCompiler<'ctx> {
                     let skip_idx = ((idx + 1) as isize + skip_offset) as usize;
                     let next_idx = idx + 1;
                     if skip_idx >= blocks.len() || next_idx >= blocks.len() {
-                        return Err(format!("QDoSetup target out of bounds"));
+                        return Err("QDoSetup target out of bounds".to_string());
                     }
 
                     self.builder.build_conditional_branch(should_skip, blocks[skip_idx], blocks[next_idx])
@@ -515,7 +517,7 @@ impl<'ctx> LLVMCompiler<'ctx> {
                     let loop_start_idx = ((idx + 1) as isize + offset) as usize;
                     let next_idx = idx + 1;
                     if loop_start_idx >= blocks.len() || next_idx >= blocks.len() {
-                        return Err(format!("Loop target out of bounds"));
+                        return Err("Loop target out of bounds".to_string());
                     }
 
                     self.builder.build_conditional_branch(is_done, blocks[next_idx], blocks[loop_start_idx])
@@ -553,7 +555,7 @@ impl<'ctx> LLVMCompiler<'ctx> {
                     let loop_start_idx = ((idx + 1) as isize + offset) as usize;
                     let next_idx = idx + 1;
                     if loop_start_idx >= blocks.len() || next_idx >= blocks.len() {
-                        return Err(format!("PlusLoop target out of bounds"));
+                        return Err("PlusLoop target out of bounds".to_string());
                     }
 
                     self.builder.build_conditional_branch(is_done, blocks[next_idx], blocks[loop_start_idx])
@@ -887,6 +889,7 @@ impl<'ctx> LLVMCompiler<'ctx> {
 // ============================================================================
 // EXTERN C PRIMITIVE FUNCTIONS
 // ============================================================================
+
 // These functions are called from JIT-compiled code and implement all Forth primitives.
 // They operate directly on stack pointers for performance.
 
@@ -1047,10 +1050,10 @@ pub extern "C" fn forth_div(
     _memory: *mut u8, _here: *mut usize,
 ) {
     unsafe {
-        if let (Some(b), Some(a)) = (stack_pop(data_stack, data_len), stack_pop(data_stack, data_len)) {
-            if b != 0 {
-                stack_push(data_stack, data_len, a / b);
-            }
+        if let (Some(b), Some(a)) = (stack_pop(data_stack, data_len), stack_pop(data_stack, data_len))
+            && b != 0
+        {
+            stack_push(data_stack, data_len, a / b);
         }
     }
 }
@@ -1063,10 +1066,10 @@ pub extern "C" fn forth_mod(
     _memory: *mut u8, _here: *mut usize,
 ) {
     unsafe {
-        if let (Some(b), Some(a)) = (stack_pop(data_stack, data_len), stack_pop(data_stack, data_len)) {
-            if b != 0 {
-                stack_push(data_stack, data_len, a % b);
-            }
+        if let (Some(b), Some(a)) = (stack_pop(data_stack, data_len), stack_pop(data_stack, data_len))
+            && b != 0
+        {
+            stack_push(data_stack, data_len, a % b);
         }
     }
 }
@@ -1335,8 +1338,8 @@ pub extern "C" fn forth_store(
             let addr = addr as usize;
             if addr + 8 <= 65536 {
                 let bytes = value.to_le_bytes();
-                for i in 0..8 {
-                    *memory.add(addr + i) = bytes[i];
+                for (i, &byte) in bytes.iter().enumerate() {
+                    *memory.add(addr + i) = byte;
                 }
             }
         }
