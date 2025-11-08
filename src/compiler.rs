@@ -510,7 +510,9 @@ impl Compiler {
 
     /// Get all defined words
     pub fn words(&self) -> Vec<String> {
-        self.dictionary.keys().cloned().collect()
+        let mut words: Vec<String> = self.dictionary.keys().cloned().collect();
+        words.sort(); // Sort to ensure consistent ordering
+        words
     }
 
     /// Get the immediate instructions (for REPL expressions)
@@ -702,17 +704,17 @@ impl Executor {
         // First, ensure all words referenced in the instructions are compiled
         self.compile_all_words_to_llvm()?;
 
-        // Compile instructions to LLVM and execute
-        // Use a unique name for each execution
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        static COUNTER: AtomicUsize = AtomicUsize::new(0);
-        let exec_name = format!("_exec_{}", COUNTER.fetch_add(1, Ordering::Relaxed));
+        // Use a fixed name and allow recompilation
+        let exec_name = "_exec_immediate";
+
+        // Remove the old version if it exists
+        self.llvm_compiler.remove_function(exec_name);
 
         // Compile to LLVM
-        self.llvm_compiler.compile_word(&exec_name, instructions)?;
+        self.llvm_compiler.compile_word(exec_name, instructions)?;
 
         // Get the compiled function
-        let func = self.llvm_compiler.get_function(&exec_name)?;
+        let func = self.llvm_compiler.get_function(exec_name)?;
 
         // Prepare stacks and memory as raw arrays
         let mut data_stack = vec![0i64; 256];

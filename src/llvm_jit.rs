@@ -38,6 +38,10 @@ pub struct LLVMCompiler<'ctx> {
 
     // Primitive function declarations
     primitive_funcs: HashMap<Primitive, FunctionValue<'ctx>>,
+
+    // Variable allocation tracking
+    variable_offsets: HashMap<String, i64>,
+    next_variable_offset: i64,
 }
 
 impl<'ctx> LLVMCompiler<'ctx> {
@@ -62,6 +66,8 @@ impl<'ctx> LLVMCompiler<'ctx> {
             execution_engine: Some(execution_engine),
             functions: HashMap::new(),
             primitive_funcs: HashMap::new(),
+            variable_offsets: HashMap::new(),
+            next_variable_offset: 0,
         })
     }
 
@@ -85,6 +91,8 @@ impl<'ctx> LLVMCompiler<'ctx> {
             execution_engine: None,
             functions: HashMap::new(),
             primitive_funcs: HashMap::new(),
+            variable_offsets: HashMap::new(),
+            next_variable_offset: 0,
         })
     }
 
@@ -156,6 +164,17 @@ impl<'ctx> LLVMCompiler<'ctx> {
 
         self.primitive_funcs.insert(primitive, func);
         func
+    }
+
+    /// Remove a function from the compiler
+    pub fn remove_function(&mut self, name: &str) {
+        self.functions.remove(name);
+        // Also remove from module if it exists
+        if let Some(func) = self.module.get_function(name) {
+            unsafe {
+                func.delete();
+            }
+        }
     }
 
     /// Compile a Forth word to LLVM IR
@@ -544,16 +563,18 @@ impl<'ctx> LLVMCompiler<'ctx> {
 
                 Instruction::VariableAddr(var_name) => {
                     // Push variable address onto stack
-                    // For now, we'll use a simple approach: allocate space in memory
-                    // Variables are stored at fixed offsets from a base address
-                    // This is a simplified implementation
+                    // Variables are allocated sequentially, 8 bytes apart
                     let helper_fn = self.declare_var_helper("forth_variable_addr");
 
-                    // Create a hash of the variable name to get a consistent address
-                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                    use std::hash::{Hash, Hasher};
-                    var_name.hash(&mut hasher);
-                    let var_offset = (hasher.finish() % 10000) as i64;  // Keep it in a reasonable range
+                    // Get or allocate offset for this variable
+                    let var_offset = if let Some(&offset) = self.variable_offsets.get(var_name) {
+                        offset
+                    } else {
+                        let offset = self.next_variable_offset;
+                        self.variable_offsets.insert(var_name.clone(), offset);
+                        self.next_variable_offset += 8; // Each variable is 8 bytes (i64)
+                        offset
+                    };
 
                     let offset_val = self.context.i64_type().const_int(var_offset as u64, false);
 
@@ -1395,9 +1416,11 @@ pub extern "C" fn forth_plusloop_check(
 
                 // Check if crossed the boundary
                 if increment >= 0 {
+                    // Positive increment: exit when counter >= limit (crossed from below)
                     if *counter_ptr >= limit && old_counter < limit { 1 } else { 0 }
                 } else {
-                    if *counter_ptr < limit && old_counter >= limit { 1 } else { 0 }
+                    // Negative increment: exit when counter <= limit (crossed from above)
+                    if *counter_ptr <= limit && old_counter > limit { 1 } else { 0 }
                 }
             } else {
                 1  // Error, exit loop
