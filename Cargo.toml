@@ -14,3 +14,5 @@ path = "src/main.rs"
 [dependencies]
 rustyline = "17.0"
 dirs = "5.0"
+inkwell = { version = "0.6.0", features = ["llvm18-1"] }
+lazy_static = "1.5"
