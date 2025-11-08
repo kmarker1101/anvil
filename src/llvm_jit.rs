@@ -114,13 +114,22 @@ impl<'ctx> LLVMCompiler<'ctx> {
         let module = context.create_module(name);
         let builder = context.create_builder();
 
-        // Initialize all targets for AOT
-        Target::initialize_all(&InitializationConfig::default());
+        // Initialize native target with ASM printer and parser for object file generation
+        Target::initialize_native(&InitializationConfig {
+            asm_parser: true,
+            asm_printer: true,
+            base: true,
+            disassembler: false,
+            info: true,
+            machine_code: true,
+        })
+            .map_err(|e| format!("Failed to initialize native target: {}", e))?;
 
-        // Set target triple
-        if let Some(triple) = target_triple {
-            module.set_triple(&inkwell::targets::TargetTriple::create(&triple));
-        }
+        // Set target triple (use native if not specified)
+        let triple = target_triple.unwrap_or_else(|| {
+            inkwell::targets::TargetMachine::get_default_triple().to_string()
+        });
+        module.set_triple(&inkwell::targets::TargetTriple::create(&triple));
 
         Ok(LLVMCompiler {
             context,
@@ -858,13 +867,16 @@ impl<'ctx> LLVMCompiler<'ctx> {
 
     /// Generate object file for AOT compilation
     pub fn emit_object_file(&self, path: &str) -> Result<(), String> {
-        let target_triple = self.module.get_triple();
-        let target = Target::from_triple(&target_triple)
-            .map_err(|e| format!("Failed to get target: {}", e.to_string()))?;
+        // Use the native target triple
+        let native_triple = inkwell::targets::TargetMachine::get_default_triple();
+
+        // Get the target from the native triple
+        let target = Target::from_name("aarch64")
+            .ok_or_else(|| "Failed to find aarch64 target".to_string())?;
 
         let target_machine = target
             .create_target_machine(
-                &target_triple,
+                &native_triple,
                 "generic",
                 "",
                 OptimizationLevel::Aggressive,

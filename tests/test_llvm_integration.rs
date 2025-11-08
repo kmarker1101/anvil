@@ -1,9 +1,9 @@
 // Integration test - parse Forth code and execute via LLVM
 
-use forth::llvm_jit::LLVMCompiler;
-use forth::lexer::Lexer;
-use forth::parser::Parser;
 use forth::compiler::Compiler;
+use forth::lexer::Lexer;
+use forth::llvm_jit::LLVMCompiler;
+use forth::parser::Parser;
 use inkwell::context::Context;
 
 #[test]
@@ -14,7 +14,6 @@ fn test_parse_and_execute_word() {
     let tokens = lexer.tokenize().unwrap();
     let mut parser = Parser::new(tokens);
     let program = parser.parse().unwrap();
-
     // Compile the definition to get instructions
     let mut compiler = Compiler::new();
     compiler.compile_program(program).unwrap();
@@ -25,13 +24,15 @@ fn test_parse_and_execute_word() {
     // Compile with LLVM
     let context = Context::create();
     let mut llvm_compiler = LLVMCompiler::new_jit(&context, "test").unwrap();
-    llvm_compiler.compile_word("SQUARE", &word.instructions).unwrap();
+    llvm_compiler
+        .compile_word("SQUARE", &word.instructions)
+        .unwrap();
     let func = llvm_compiler.get_function("SQUARE").unwrap();
 
     // Execute with 7 on stack (7 squared = 49)
     let mut data_stack = vec![0i64; 256];
     data_stack[0] = 7;
-    let mut data_len = 1usize;  // Start with 7 already on stack
+    let mut data_len = 1usize; // Start with 7 already on stack
     let mut return_stack = vec![0i64; 256];
     let mut return_len = 0usize;
     let mut loop_stack = vec![0i64; 256];

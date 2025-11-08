@@ -503,6 +503,11 @@ impl Compiler {
         words
     }
 
+    /// Get all compiled words (for AOT compilation)
+    pub fn compiled_words(&self) -> &std::collections::HashMap<String, CompiledWord> {
+        &self.dictionary
+    }
+
     /// Get the immediate instructions (for REPL expressions)
     pub fn take_immediate_instructions(&mut self) -> Vec<Instruction> {
         std::mem::take(&mut self.immediate_instructions)

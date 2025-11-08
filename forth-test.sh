@@ -3,7 +3,7 @@
 
 set -e
 
-ANVIL="./target/debug/forth"
+ANVIL="./target/debug/anvil"
 TEST_FILE="${1:-tests/run-all.fth}"
 
 # Check if this is run-all.fth or an individual test file
