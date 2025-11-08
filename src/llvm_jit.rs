@@ -39,6 +39,9 @@ pub struct LLVMCompiler<'ctx> {
     // Primitive function declarations
     primitive_funcs: HashMap<Primitive, FunctionValue<'ctx>>,
 
+    // Temporary execution engines for immediate code (kept alive to preserve machine code)
+    temp_engines: Vec<ExecutionEngine<'ctx>>,
+
     // Variable allocation tracking
     variable_offsets: HashMap<String, i64>,
     next_variable_offset: i64,
@@ -54,18 +57,17 @@ impl<'ctx> LLVMCompiler<'ctx> {
         Target::initialize_native(&InitializationConfig::default())
             .map_err(|e| format!("Failed to initialize native target: {}", e))?;
 
-        // Create execution engine with symbol resolver
-        let execution_engine = module
-            .create_jit_execution_engine(OptimizationLevel::None) // Use None for easier debugging
-            .map_err(|e| format!("Failed to create execution engine: {}", e.to_string()))?;
+        // Don't create ExecutionEngine yet - delay until first execution
+        // This allows all functions to be compiled first
 
         Ok(LLVMCompiler {
             context,
             module,
             builder,
-            execution_engine: Some(execution_engine),
+            execution_engine: None,  // Created lazily
             functions: HashMap::new(),
             primitive_funcs: HashMap::new(),
+            temp_engines: Vec::new(),
             variable_offsets: HashMap::new(),
             next_variable_offset: 0,
         })
@@ -91,6 +93,7 @@ impl<'ctx> LLVMCompiler<'ctx> {
             execution_engine: None,
             functions: HashMap::new(),
             primitive_funcs: HashMap::new(),
+            temp_engines: Vec::new(),
             variable_offsets: HashMap::new(),
             next_variable_offset: 0,
         })
@@ -748,18 +751,59 @@ impl<'ctx> LLVMCompiler<'ctx> {
         func
     }
 
+    /// Compile an immediate expression (allows recompilation)
+    pub fn compile_word_immediate(&mut self, name: &str, instructions: &[Instruction]) -> Result<(), String> {
+        // For immediate code, always recompile by removing old version first
+        self.functions.remove(name);
+        if let Some(func) = self.module.get_function(name) {
+            unsafe {
+                while let Some(bb) = func.get_first_basic_block() {
+                    bb.delete();
+                }
+            }
+        }
+
+        // Now compile normally
+        self.compile_word(name, instructions)
+    }
+
+    /// Get a function pointer for immediate code (creates ExecutionEngine if needed)
+    pub fn get_immediate_function(&mut self, name: &str) -> Result<ForthFunction, String> {
+        // Create the ExecutionEngine lazily on first use
+        // This ensures all functions are compiled before the EE is created
+        if self.execution_engine.is_none() {
+            let ee = self.module
+                .create_jit_execution_engine(OptimizationLevel::None)
+                .map_err(|e| format!("Failed to create execution engine: {}", e))?;
+            self.execution_engine = Some(ee);
+        }
+
+        // Now use the regular get_function
+        self.get_function(name)
+    }
+
     /// Get a JIT-compiled function pointer
-    pub fn get_function(&self, name: &str) -> Result<ForthFunction, String> {
+    pub fn get_function(&mut self, name: &str) -> Result<ForthFunction, String> {
+        // Create the ExecutionEngine lazily on first use
+        if self.execution_engine.is_none() {
+            let ee = self.module
+                .create_jit_execution_engine(OptimizationLevel::None)
+                .map_err(|e| format!("Failed to create execution engine: {}", e))?;
+            self.execution_engine = Some(ee);
+        }
+
         let ee = self.execution_engine.as_ref()
             .ok_or_else(|| "No execution engine (AOT mode?)".to_string())?;
 
-        unsafe {
-            let func: JitFunction<ForthFunction> = ee
-                .get_function(name)
-                .map_err(|e| format!("Failed to get function: {}", e))?;
 
-            // Get the raw function pointer and transmute it
-            let func_ptr = func.as_raw() as *const ();
+        unsafe {
+            // Use get_function with type parameter - this automatically finalizes
+            let jit_fn: JitFunction<ForthFunction> = ee
+                .get_function(name)
+                .map_err(|e| format!("Failed to get function {}: {}", name, e))?;
+
+            // Get the raw function pointer
+            let func_ptr = jit_fn.as_raw() as *const ();
             let forth_func: ForthFunction = std::mem::transmute(func_ptr);
             Ok(forth_func)
         }
