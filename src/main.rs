@@ -285,7 +285,7 @@ fn print_words(executor: &Executor) {
             println!();
         }
     }
-    if words.len() % 6 != 0 {
+    if !words.len().is_multiple_of(6) {
         println!();
     }
 }

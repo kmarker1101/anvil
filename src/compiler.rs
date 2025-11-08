@@ -99,6 +99,12 @@ impl std::fmt::Display for CompileError {
 
 impl std::error::Error for CompileError {}
 
+impl Default for Compiler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Compiler {
     pub fn new() -> Self {
         let mut compiler = Compiler {
@@ -244,7 +250,7 @@ impl Compiler {
                 self.current_instructions.clear();  // Start fresh
                 self.compile_expression(expr)?;
                 // Move current instructions to immediate storage
-                self.immediate_instructions.extend(self.current_instructions.drain(..));
+                self.immediate_instructions.append(&mut self.current_instructions);
                 Ok(())
             }
         }
@@ -292,12 +298,11 @@ impl Compiler {
                 if self.dictionary.contains_key(&word) {
                     // Check if it's a primitive (single instruction)
                     let compiled = self.dictionary.get(&word).unwrap();
-                    if compiled.instructions.len() == 1 {
-                        if let Instruction::Primitive(prim) = compiled.instructions[0] {
-                            // Inline primitive
-                            self.current_instructions.push(Instruction::Primitive(prim));
-                            return Ok(());
-                        }
+                    if compiled.instructions.len() == 1
+                        && let Instruction::Primitive(prim) = compiled.instructions[0] {
+                        // Inline primitive
+                        self.current_instructions.push(Instruction::Primitive(prim));
+                        return Ok(());
                     }
                     
                     // Otherwise, emit a call
@@ -527,6 +532,12 @@ pub struct Executor {
     vm: VM,
     compiler: Compiler,
     variables: HashMap<String, i64>, // variable name -> memory address
+}
+
+impl Default for Executor {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Executor {
@@ -1157,7 +1168,7 @@ mod tests {
 
         assert_eq!(executor.vm().data_stack.depth(), 5);
 
-        let expected = vec![0, 2, 4, 6, 8];
+        let expected = [0, 2, 4, 6, 8];
         for val in expected.iter().rev() {
             assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), *val);
         }
@@ -1180,7 +1191,7 @@ mod tests {
 
         assert_eq!(executor.vm().data_stack.depth(), 5);
 
-        let expected = vec![10, 8, 6, 4, 2];
+        let expected = [10, 8, 6, 4, 2];
         for val in expected.iter().rev() {
             assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), *val);
         }
@@ -1205,7 +1216,7 @@ mod tests {
         assert_eq!(executor.vm().data_stack.depth(), 6);
 
         // Should be 0 1 0 1 0 1 on stack (last pushed on top)
-        let expected = vec![0, 1, 0, 1, 0, 1];
+        let expected = [0, 1, 0, 1, 0, 1];
         for val in expected.iter().rev() {
             assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), *val);
         }

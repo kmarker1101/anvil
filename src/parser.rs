@@ -554,7 +554,7 @@ mod tests {
                 for expr in body {
                     if let Expression::BeginUntil { body: loop_body } = expr {
                         found_begin = true;
-                        assert!(loop_body.len() > 0);
+                        assert!(!loop_body.is_empty());
                     }
                 }
                 assert!(found_begin, "Should have BEGIN-UNTIL");
@@ -667,7 +667,7 @@ mod tests {
         match &program.definitions[0] {
             Definition::Word { name, body } => {
                 assert_eq!(name, "FACTORIAL");
-                assert!(body.len() > 0);
+                assert!(!body.is_empty());
             }
             _ => panic!("Expected word definition"),
         }

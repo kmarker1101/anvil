@@ -12,6 +12,12 @@ pub struct Stack {
     data: Vec<i64>,
 }
 
+impl Default for Stack {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Stack {
     pub fn new() -> Self {
         Stack {
@@ -57,6 +63,12 @@ impl Stack {
 #[derive(Debug, Clone)]
 pub struct ReturnStack {
     data: Vec<i64>,
+}
+
+impl Default for ReturnStack {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ReturnStack {
@@ -218,6 +230,12 @@ pub struct VM {
     pub memory: Vec<u8>,
     pub loop_stack: Stack, // For DO/LOOP: stores current index and limit
     pub here: usize,       // Dictionary pointer for string allocation
+}
+
+impl Default for VM {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl VM {
