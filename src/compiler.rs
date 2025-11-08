@@ -84,7 +84,6 @@ pub struct Compiler {
 pub enum CompileError {
     UndefinedWord(String),
     InvalidControlFlow(String),
-    DuplicateDefinition(String),
 }
 
 impl std::fmt::Display for CompileError {
@@ -92,7 +91,6 @@ impl std::fmt::Display for CompileError {
         match self {
             CompileError::UndefinedWord(w) => write!(f, "Undefined word: {}", w),
             CompileError::InvalidControlFlow(msg) => write!(f, "Invalid control flow: {}", msg),
-            CompileError::DuplicateDefinition(w) => write!(f, "Duplicate definition: {}", w),
         }
     }
 }
@@ -196,11 +194,6 @@ impl Compiler {
     fn compile_definition(&mut self, definition: Definition) -> Result<(), CompileError> {
         match definition {
             Definition::Variable { name } => {
-                // Check for duplicate
-                if self.dictionary.contains_key(&name) {
-                    return Err(CompileError::DuplicateDefinition(name));
-                }
-
                 // Variables push their address when called
                 // We'll use a special instruction that allocates and returns address
                 let instructions = vec![Instruction::VariableAddr(name.clone())];
@@ -215,11 +208,6 @@ impl Compiler {
             }
 
             Definition::Word { name, body } => {
-                // Check for duplicate
-                if self.dictionary.contains_key(&name) {
-                    return Err(CompileError::DuplicateDefinition(name));
-                }
-
                 // Compile the word body
                 self.current_instructions.clear();
                 self.branch_stack.clear();
@@ -585,11 +573,27 @@ impl Executor {
 
     /// Compile and execute a program
     pub fn execute_program(&mut self, program: Program) -> Result<(), String> {
+        // Check for redefinitions and print warning
+        for definition in &program.definitions {
+            let name = match definition {
+                crate::parser::Definition::Word { name, .. } => Some(name),
+                crate::parser::Definition::Variable { name } => Some(name),
+                _ => None,
+            };
+
+            if let Some(name) = name {
+                if self.compiler.get_word(name).is_some() {
+                    // This is a redefinition - warn the user
+                    print!("Warning: redefining {} ", name.to_uppercase());
+                }
+            }
+        }
+
         // Compile to Forth bytecode
         self.compiler.compile_program(program)
             .map_err(|e| e.to_string())?;
 
-        // Compile all words to LLVM
+        // Compile all words to LLVM (will automatically recompile redefined words)
         self.compile_all_words_to_llvm()?;
 
         // Execute any immediate instructions (from standalone expressions)
@@ -1097,10 +1101,14 @@ mod tests {
         let mut executor = compile_and_run("10 20 +").unwrap();
         assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 30);
 
-        // Second expression (create new executor due to LLVM ExecutionEngine limitations)
-        // TODO: Switch to LLVM ORC JIT to support multiple immediate expressions per executor
-        let mut executor2 = compile_and_run("3 DUP *").unwrap();
-        assert_eq!(executor2.vm_mut().data_stack.pop().unwrap(), 9);
+        // Second expression (using same executor - this is the key REPL requirement!)
+        let mut lexer = Lexer::new("3 DUP *");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 9);
     }
 
     #[test]

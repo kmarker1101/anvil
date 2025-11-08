@@ -19,6 +19,40 @@ use std::collections::HashMap;
 use crate::compiler::Instruction;
 use crate::primitives::Primitive;
 
+// Ensure all forth_* symbols are included in the binary
+// LLVM MCJIT will resolve these from the current process
+#[inline(never)]
+fn register_forth_symbols() -> usize {
+    let symbols = [
+        forth_dup as usize,
+        forth_drop as usize,
+        forth_swap as usize,
+        forth_over as usize,
+        forth_rot as usize,
+        forth_add as usize,
+        forth_sub as usize,
+        forth_mul as usize,
+        forth_div as usize,
+        forth_mod as usize,
+        forth_equals as usize,
+        forth_less as usize,
+        forth_greater as usize,
+        forth_and as usize,
+        forth_or as usize,
+        forth_xor as usize,
+        forth_invert as usize,
+        forth_to_r as usize,
+        forth_from_r as usize,
+        forth_r_fetch as usize,
+        forth_fetch as usize,
+        forth_store as usize,
+        forth_c_fetch as usize,
+        forth_c_store as usize,
+        forth_emit as usize,
+    ];
+    symbols[0]
+}
+
 /// Compiled function signature:
 /// fn(data_stack: *mut i64, data_len: *mut usize,
 ///    return_stack: *mut i64, return_len: *mut usize,
@@ -182,11 +216,6 @@ impl<'ctx> LLVMCompiler<'ctx> {
 
     /// Compile a Forth word to LLVM IR
     pub fn compile_word(&mut self, name: &str, instructions: &[Instruction]) -> Result<(), String> {
-        // Skip if already compiled
-        if self.functions.contains_key(name) {
-            return Ok(());
-        }
-
         let ptr_type = self.context.ptr_type(AddressSpace::default());
 
         // Create function signature
@@ -205,10 +234,19 @@ impl<'ctx> LLVMCompiler<'ctx> {
             false,
         );
 
-        // Check if function already exists in module (forward declaration)
+        // Check if function already exists - if so, clear it and recompile
         let function = if let Some(existing) = self.module.get_function(name) {
+            // Clear existing basic blocks for redefinition
+            unsafe {
+                while let Some(bb) = existing.get_first_basic_block() {
+                    let _ = bb.delete();
+                }
+            }
+            // Remove from our tracking
+            self.functions.remove(name);
             existing
         } else {
+            // Create new function
             self.module.add_function(name, fn_type, None)
         };
 
@@ -758,7 +796,7 @@ impl<'ctx> LLVMCompiler<'ctx> {
         if let Some(func) = self.module.get_function(name) {
             unsafe {
                 while let Some(bb) = func.get_first_basic_block() {
-                    bb.delete();
+                    let _ = bb.delete();
                 }
             }
         }
@@ -783,21 +821,24 @@ impl<'ctx> LLVMCompiler<'ctx> {
     }
 
     /// Get a JIT-compiled function pointer
+    /// Creates a NEW ExecutionEngine each time to support dynamic function addition
+    /// MCJIT will resolve forth_* primitives from the current process
     pub fn get_function(&mut self, name: &str) -> Result<ForthFunction, String> {
-        // Create the ExecutionEngine lazily on first use
-        if self.execution_engine.is_none() {
-            let ee = self.module
-                .create_jit_execution_engine(OptimizationLevel::None)
-                .map_err(|e| format!("Failed to create execution engine: {}", e))?;
-            self.execution_engine = Some(ee);
-        }
+        // Ensure forth_* symbols are included in binary
+        let _ = register_forth_symbols();
 
-        let ee = self.execution_engine.as_ref()
-            .ok_or_else(|| "No execution engine (AOT mode?)".to_string())?;
+        // Clone the module to create a new ExecutionEngine
+        // (LLVM doesn't allow multiple EEs for the same module)
+        let module_clone = self.module.clone();
 
+        // Create a NEW ExecutionEngine for the cloned module
+        // This allows MCJIT to see all functions compiled so far
+        let ee = module_clone
+            .create_jit_execution_engine(OptimizationLevel::Aggressive)
+            .map_err(|e| format!("Failed to create execution engine: {}", e))?;
 
         unsafe {
-            // Use get_function with type parameter - this automatically finalizes
+            // Get the function
             let jit_fn: JitFunction<ForthFunction> = ee
                 .get_function(name)
                 .map_err(|e| format!("Failed to get function {}: {}", name, e))?;
@@ -805,6 +846,10 @@ impl<'ctx> LLVMCompiler<'ctx> {
             // Get the raw function pointer
             let func_ptr = jit_fn.as_raw() as *const ();
             let forth_func: ForthFunction = std::mem::transmute(func_ptr);
+
+            // Keep the ExecutionEngine alive to preserve the JIT-compiled code
+            self.temp_engines.push(ee);
+
             Ok(forth_func)
         }
     }
@@ -1480,7 +1525,7 @@ pub extern "C" fn forth_plusloop_check(
 pub extern "C" fn forth_loop_end(
     _data_stack: *mut i64, _data_len: *mut usize,
     _return_stack: *mut i64, _return_len: *mut usize,
-    loop_stack: *mut i64, loop_len: *mut usize,
+    _loop_stack: *mut i64, loop_len: *mut usize,
     _memory: *mut u8, _here: *mut usize,
 ) {
     unsafe {

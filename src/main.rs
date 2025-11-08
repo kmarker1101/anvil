@@ -78,7 +78,6 @@ fn main() -> Result<()> {
                     match cmd.as_str() {
                         ".quit" | ".exit" | ".q" => {
                             println!();
-                            println!("Goodbye!");
                             break;
                         }
                         ".help" | ".h" => {
@@ -120,7 +119,7 @@ fn main() -> Result<()> {
 
                 // Check for BYE word (Forth standard exit)
                 if input.to_uppercase() == "BYE" {
-                    println!(" Goodbye!");
+                    println!();
                     break;
                 }
 
@@ -132,7 +131,7 @@ fn main() -> Result<()> {
                         Ok(()) => println!(" ok"),
                         Err(e) => {
                             if e == "EXIT" {
-                                println!(" Goodbye!");
+                                println!();
                                 break;
                             }
                             println!(" Error loading {}: {}", file_path, e)
@@ -157,7 +156,7 @@ fn main() -> Result<()> {
                 continue;
             }
             Err(ReadlineError::Eof) => {
-                println!("Goodbye!");
+                println!();
                 break;
             }
             Err(err) => {
