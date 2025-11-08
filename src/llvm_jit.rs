@@ -23,8 +23,9 @@ use crate::primitives::Primitive;
 /// fn(data_stack: *mut i64, data_len: *mut usize,
 ///    return_stack: *mut i64, return_len: *mut usize,
 ///    loop_stack: *mut i64, loop_len: *mut usize,
-///    memory: *mut u8, here: *mut usize)
-type ForthFunction = unsafe extern "C" fn(*mut i64, *mut usize, *mut i64, *mut usize, *mut i64, *mut usize, *mut u8, *mut usize);
+///    memory: *mut u8, here: *mut usize,
+///    exit_flag: *mut bool)
+type ForthFunction = unsafe extern "C" fn(*mut i64, *mut usize, *mut i64, *mut usize, *mut i64, *mut usize, *mut u8, *mut usize, *mut bool);
 
 pub struct LLVMCompiler<'ctx> {
     context: &'ctx Context,
@@ -106,6 +107,7 @@ impl<'ctx> LLVMCompiler<'ctx> {
                 ptr_type.into(), // loop_len
                 ptr_type.into(), // memory
                 ptr_type.into(), // here
+                ptr_type.into(), // exit_flag
             ],
             false,
         );
@@ -137,10 +139,10 @@ impl<'ctx> LLVMCompiler<'ctx> {
             Primitive::Xor => ("forth_xor", forth_xor as usize),
             Primitive::Invert => ("forth_invert", forth_invert as usize),
             Primitive::Emit => ("forth_emit", forth_emit as usize),
-            Primitive::Key => ("forth_key", 0), // TODO: implement forth_key
+            Primitive::Key => ("forth_key", forth_key as usize),
             Primitive::Dot => ("forth_dot", forth_dot as usize),
             Primitive::Cr => ("forth_cr", forth_cr as usize),
-            Primitive::Type => ("forth_type", 0), // TODO: implement forth_type
+            Primitive::Type => ("forth_type", forth_type as usize),
             Primitive::I => ("forth_i", forth_i as usize),
             Primitive::Depth => ("forth_depth", forth_depth as usize),
         };
@@ -158,6 +160,11 @@ impl<'ctx> LLVMCompiler<'ctx> {
 
     /// Compile a Forth word to LLVM IR
     pub fn compile_word(&mut self, name: &str, instructions: &[Instruction]) -> Result<(), String> {
+        // Skip if already compiled
+        if self.functions.contains_key(name) {
+            return Ok(());
+        }
+
         let ptr_type = self.context.ptr_type(AddressSpace::default());
 
         // Create function signature
@@ -171,11 +178,18 @@ impl<'ctx> LLVMCompiler<'ctx> {
                 ptr_type.into(), // loop_len
                 ptr_type.into(), // memory
                 ptr_type.into(), // here
+                ptr_type.into(), // exit_flag
             ],
             false,
         );
 
-        let function = self.module.add_function(name, fn_type, None);
+        // Check if function already exists in module (forward declaration)
+        let function = if let Some(existing) = self.module.get_function(name) {
+            existing
+        } else {
+            self.module.add_function(name, fn_type, None)
+        };
+
         let entry_block = self.context.append_basic_block(function, "entry");
         self.builder.position_at_end(entry_block);
 
@@ -188,9 +202,24 @@ impl<'ctx> LLVMCompiler<'ctx> {
         let loop_len_ptr = function.get_nth_param(5).unwrap().into_pointer_value();
         let memory_ptr = function.get_nth_param(6).unwrap().into_pointer_value();
         let here_ptr = function.get_nth_param(7).unwrap().into_pointer_value();
+        let exit_flag_ptr = function.get_nth_param(8).unwrap().into_pointer_value();
+
+        // Create basic blocks for branch targets
+        let mut blocks = Vec::new();
+        for i in 0..instructions.len() {
+            let block = self.context.append_basic_block(function, &format!("bb{}", i));
+            blocks.push(block);
+        }
+
+        // Branch from entry to first instruction
+        if !blocks.is_empty() {
+            self.builder.build_unconditional_branch(blocks[0])
+                .map_err(|e| format!("Failed to build entry branch: {}", e))?;
+        }
 
         // Compile each instruction
-        for instruction in instructions {
+        for (idx, instruction) in instructions.iter().enumerate() {
+            self.builder.position_at_end(blocks[idx]);
             match instruction {
                 Instruction::Literal(value) => {
                     // Push literal onto data stack inline (no function call)
@@ -238,18 +267,112 @@ impl<'ctx> LLVMCompiler<'ctx> {
                             loop_len_ptr.into(),
                             memory_ptr.into(),
                             here_ptr.into(),
+                            exit_flag_ptr.into(),
                         ],
                         "",
                     ).map_err(|e| format!("Failed to build call: {}", e))?;
                 }
 
                 Instruction::Call(word_name) => {
-                    // Call another Forth word
-                    let callee = self.functions.get(word_name)
-                        .ok_or_else(|| format!("Undefined word: {}", word_name))?;
+                    // Call another Forth word - get or declare function
+                    let callee = if let Some(func) = self.functions.get(word_name) {
+                        *func
+                    } else if let Some(func) = self.module.get_function(word_name) {
+                        // Function exists in module but not in our map (recursive call)
+                        func
+                    } else {
+                        // Create forward declaration
+                        let ptr_type = self.context.ptr_type(AddressSpace::default());
+                        let fn_type = self.context.void_type().fn_type(
+                            &[
+                                ptr_type.into(), ptr_type.into(), ptr_type.into(), ptr_type.into(),
+                                ptr_type.into(), ptr_type.into(), ptr_type.into(), ptr_type.into(),
+                                ptr_type.into(), // exit_flag
+                            ],
+                            false,
+                        );
+                        self.module.add_function(word_name, fn_type, None)
+                    };
 
                     self.builder.build_call(
-                        *callee,
+                        callee,
+                        &[
+                            data_stack_ptr.into(),
+                            data_len_ptr.into(),
+                            return_stack_ptr.into(),
+                            return_len_ptr.into(),
+                            loop_stack_ptr.into(),
+                            loop_len_ptr.into(),
+                            memory_ptr.into(),
+                            here_ptr.into(),
+                            exit_flag_ptr.into(),
+                        ],
+                        "",
+                    ).map_err(|e| format!("Failed to build call: {}", e))?;
+                }
+
+                Instruction::Return => {
+                    // Early return from current word
+                    self.builder.build_return(None)
+                        .map_err(|e| format!("Failed to build return: {}", e))?;
+                    // Don't process more instructions in this block
+                    continue;
+                }
+
+                Instruction::BranchIfZero(offset) => {
+                    // Call helper to check and pop value, then branch
+                    let helper_fn = self.declare_control_flow_helper("forth_branch_if_zero");
+                    let result = self.builder.build_call(
+                        helper_fn,
+                        &[
+                            data_stack_ptr.into(),
+                            data_len_ptr.into(),
+                            return_stack_ptr.into(),
+                            return_len_ptr.into(),
+                            loop_stack_ptr.into(),
+                            loop_len_ptr.into(),
+                            memory_ptr.into(),
+                            here_ptr.into(),
+                        ],
+                        "branch_cond",
+                    ).map_err(|e| format!("Failed to call helper: {}", e))?;
+
+                    let cond = result.try_as_basic_value().left().unwrap().into_int_value();
+                    let zero = self.context.i64_type().const_int(0, false);
+                    let is_zero = self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        cond,
+                        zero,
+                        "is_zero"
+                    ).map_err(|e| format!("Failed to compare: {}", e))?;
+
+                    // Offset is relative to next instruction (idx + 1)
+                    let target_idx = ((idx + 1) as isize + offset) as usize;
+                    let next_idx = idx + 1;
+                    if target_idx >= blocks.len() || next_idx >= blocks.len() {
+                        return Err(format!("Branch target out of bounds"));
+                    }
+
+                    self.builder.build_conditional_branch(is_zero, blocks[target_idx], blocks[next_idx])
+                        .map_err(|e| format!("Failed to build branch: {}", e))?;
+                    continue;
+                }
+
+                Instruction::Branch(offset) => {
+                    // Offset is relative to next instruction (idx + 1)
+                    let target_idx = ((idx + 1) as isize + offset) as usize;
+                    if target_idx >= blocks.len() {
+                        return Err(format!("Branch target out of bounds"));
+                    }
+                    self.builder.build_unconditional_branch(blocks[target_idx])
+                        .map_err(|e| format!("Failed to build branch: {}", e))?;
+                    continue;
+                }
+
+                Instruction::DoSetup => {
+                    let helper_fn = self.declare_control_flow_helper("forth_do_setup");
+                    self.builder.build_call(
+                        helper_fn,
                         &[
                             data_stack_ptr.into(),
                             data_len_ptr.into(),
@@ -261,26 +384,224 @@ impl<'ctx> LLVMCompiler<'ctx> {
                             here_ptr.into(),
                         ],
                         "",
-                    ).map_err(|e| format!("Failed to build call: {}", e))?;
+                    ).map_err(|e| format!("Failed to call helper: {}", e))?;
                 }
 
-                Instruction::Return => {
-                    // Early return from current word
+                Instruction::QDoSetup(skip_offset) => {
+                    let helper_fn = self.declare_control_flow_helper("forth_qdo_setup");
+                    let result = self.builder.build_call(
+                        helper_fn,
+                        &[
+                            data_stack_ptr.into(),
+                            data_len_ptr.into(),
+                            return_stack_ptr.into(),
+                            return_len_ptr.into(),
+                            loop_stack_ptr.into(),
+                            loop_len_ptr.into(),
+                            memory_ptr.into(),
+                            here_ptr.into(),
+                        ],
+                        "should_skip",
+                    ).map_err(|e| format!("Failed to call helper: {}", e))?;
+
+                    let cond = result.try_as_basic_value().left().unwrap().into_int_value();
+                    let zero = self.context.i64_type().const_int(0, false);
+                    let should_skip = self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        cond,
+                        zero,
+                        "should_skip"
+                    ).map_err(|e| format!("Failed to compare: {}", e))?;
+
+                    // Offset is relative to next instruction (idx + 1)
+                    let skip_idx = ((idx + 1) as isize + skip_offset) as usize;
+                    let next_idx = idx + 1;
+                    if skip_idx >= blocks.len() || next_idx >= blocks.len() {
+                        return Err(format!("QDoSetup target out of bounds"));
+                    }
+
+                    self.builder.build_conditional_branch(should_skip, blocks[skip_idx], blocks[next_idx])
+                        .map_err(|e| format!("Failed to build branch: {}", e))?;
+                    continue;
+                }
+
+                Instruction::Loop(offset) => {
+                    let helper_fn = self.declare_control_flow_helper("forth_loop_check");
+                    let result = self.builder.build_call(
+                        helper_fn,
+                        &[
+                            data_stack_ptr.into(),
+                            data_len_ptr.into(),
+                            return_stack_ptr.into(),
+                            return_len_ptr.into(),
+                            loop_stack_ptr.into(),
+                            loop_len_ptr.into(),
+                            memory_ptr.into(),
+                            here_ptr.into(),
+                        ],
+                        "loop_done",
+                    ).map_err(|e| format!("Failed to call helper: {}", e))?;
+
+                    let cond = result.try_as_basic_value().left().unwrap().into_int_value();
+                    let zero = self.context.i64_type().const_int(0, false);
+                    let is_done = self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        cond,
+                        zero,
+                        "is_done"
+                    ).map_err(|e| format!("Failed to compare: {}", e))?;
+
+                    // Offset is relative to next instruction (idx + 1)
+                    let loop_start_idx = ((idx + 1) as isize + offset) as usize;
+                    let next_idx = idx + 1;
+                    if loop_start_idx >= blocks.len() || next_idx >= blocks.len() {
+                        return Err(format!("Loop target out of bounds"));
+                    }
+
+                    self.builder.build_conditional_branch(is_done, blocks[next_idx], blocks[loop_start_idx])
+                        .map_err(|e| format!("Failed to build branch: {}", e))?;
+                    continue;
+                }
+
+                Instruction::PlusLoop(offset) => {
+                    let helper_fn = self.declare_control_flow_helper("forth_plusloop_check");
+                    let result = self.builder.build_call(
+                        helper_fn,
+                        &[
+                            data_stack_ptr.into(),
+                            data_len_ptr.into(),
+                            return_stack_ptr.into(),
+                            return_len_ptr.into(),
+                            loop_stack_ptr.into(),
+                            loop_len_ptr.into(),
+                            memory_ptr.into(),
+                            here_ptr.into(),
+                        ],
+                        "loop_done",
+                    ).map_err(|e| format!("Failed to call helper: {}", e))?;
+
+                    let cond = result.try_as_basic_value().left().unwrap().into_int_value();
+                    let zero = self.context.i64_type().const_int(0, false);
+                    let is_done = self.builder.build_int_compare(
+                        inkwell::IntPredicate::NE,
+                        cond,
+                        zero,
+                        "is_done"
+                    ).map_err(|e| format!("Failed to compare: {}", e))?;
+
+                    // Offset is relative to next instruction (idx + 1)
+                    let loop_start_idx = ((idx + 1) as isize + offset) as usize;
+                    let next_idx = idx + 1;
+                    if loop_start_idx >= blocks.len() || next_idx >= blocks.len() {
+                        return Err(format!("PlusLoop target out of bounds"));
+                    }
+
+                    self.builder.build_conditional_branch(is_done, blocks[next_idx], blocks[loop_start_idx])
+                        .map_err(|e| format!("Failed to build branch: {}", e))?;
+                    continue;
+                }
+
+                Instruction::LoopEnd => {
+                    let helper_fn = self.declare_control_flow_helper("forth_loop_end");
+                    self.builder.build_call(
+                        helper_fn,
+                        &[
+                            data_stack_ptr.into(),
+                            data_len_ptr.into(),
+                            return_stack_ptr.into(),
+                            return_len_ptr.into(),
+                            loop_stack_ptr.into(),
+                            loop_len_ptr.into(),
+                            memory_ptr.into(),
+                            here_ptr.into(),
+                        ],
+                        "",
+                    ).map_err(|e| format!("Failed to call helper: {}", e))?;
+                }
+
+                Instruction::AllocString(s) => {
+                    // Allocate string in memory and push (addr len) onto stack
+                    let helper_fn = self.declare_string_helper("forth_alloc_string");
+
+                    // Create a global string constant
+                    let string_global = self.builder.build_global_string_ptr(s, "str")
+                        .map_err(|e| format!("Failed to create string: {}", e))?;
+                    let len = self.context.i64_type().const_int(s.len() as u64, false);
+
+                    self.builder.build_call(
+                        helper_fn,
+                        &[
+                            data_stack_ptr.into(),
+                            data_len_ptr.into(),
+                            memory_ptr.into(),
+                            here_ptr.into(),
+                            string_global.as_pointer_value().into(),
+                            len.into(),
+                        ],
+                        "",
+                    ).map_err(|e| format!("Failed to call helper: {}", e))?;
+                }
+
+                Instruction::VariableAddr(var_name) => {
+                    // Push variable address onto stack
+                    // For now, we'll use a simple approach: allocate space in memory
+                    // Variables are stored at fixed offsets from a base address
+                    // This is a simplified implementation
+                    let helper_fn = self.declare_var_helper("forth_variable_addr");
+
+                    // Create a hash of the variable name to get a consistent address
+                    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                    use std::hash::{Hash, Hasher};
+                    var_name.hash(&mut hasher);
+                    let var_offset = (hasher.finish() % 10000) as i64;  // Keep it in a reasonable range
+
+                    let offset_val = self.context.i64_type().const_int(var_offset as u64, false);
+
+                    self.builder.build_call(
+                        helper_fn,
+                        &[
+                            data_stack_ptr.into(),
+                            data_len_ptr.into(),
+                            offset_val.into(),
+                        ],
+                        "",
+                    ).map_err(|e| format!("Failed to call helper: {}", e))?;
+                }
+
+                Instruction::Bye => {
+                    // Set exit flag to true
+                    let bool_type = self.context.bool_type();
+                    let true_val = bool_type.const_int(1, false);
+                    self.builder.build_store(exit_flag_ptr, true_val)
+                        .map_err(|e| format!("Failed to store exit flag: {}", e))?;
+
+                    // Return from function
                     self.builder.build_return(None)
                         .map_err(|e| format!("Failed to build return: {}", e))?;
-                    // Don't add any more instructions after this
-                    return Ok(());
+                    continue;
                 }
+            }
 
-                _ => {
-                    return Err(format!("Instruction not yet implemented: {:?}", instruction));
-                }
+            // Add fall-through branch to next block (unless we already branched)
+            if idx + 1 < blocks.len() {
+                self.builder.build_unconditional_branch(blocks[idx + 1])
+                    .map_err(|e| format!("Failed to build fall-through branch: {}", e))?;
             }
         }
 
-        // Return at end of function (only reached if no explicit Return instruction)
-        self.builder.build_return(None)
-            .map_err(|e| format!("Failed to build return: {}", e))?;
+        // Add return in last block if needed
+        if let Some(last_block) = blocks.last() {
+            self.builder.position_at_end(*last_block);
+            if self.builder.get_insert_block().and_then(|b| b.get_terminator()).is_none() {
+                self.builder.build_return(None)
+                    .map_err(|e| format!("Failed to build return: {}", e))?;
+            }
+        } else {
+            // No instructions - return from entry
+            self.builder.position_at_end(entry_block);
+            self.builder.build_return(None)
+                .map_err(|e| format!("Failed to build return: {}", e))?;
+        }
 
         // Verify function
         if !function.verify(true) {
@@ -289,6 +610,121 @@ impl<'ctx> LLVMCompiler<'ctx> {
 
         self.functions.insert(name.to_string(), function);
         Ok(())
+    }
+
+    /// Declare a control flow helper function
+    fn declare_control_flow_helper(&mut self, name: &str) -> FunctionValue<'ctx> {
+        // Check if already declared
+        if let Some(func) = self.module.get_function(name) {
+            return func;
+        }
+
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let i64_type = self.context.i64_type();
+
+        // Control flow helpers return i64 (0 or 1 for conditionals)
+        let fn_type = i64_type.fn_type(
+            &[
+                ptr_type.into(), // data_stack
+                ptr_type.into(), // data_len
+                ptr_type.into(), // return_stack
+                ptr_type.into(), // return_len
+                ptr_type.into(), // loop_stack
+                ptr_type.into(), // loop_len
+                ptr_type.into(), // memory
+                ptr_type.into(), // here
+            ],
+            false,
+        );
+
+        let func = self.module.add_function(name, fn_type, None);
+
+        // Register address with execution engine
+        if let Some(ee) = &self.execution_engine {
+            let func_addr = match name {
+                "forth_branch_if_zero" => forth_branch_if_zero as usize,
+                "forth_do_setup" => forth_do_setup as usize,
+                "forth_qdo_setup" => forth_qdo_setup as usize,
+                "forth_loop_check" => forth_loop_check as usize,
+                "forth_plusloop_check" => forth_plusloop_check as usize,
+                "forth_loop_end" => forth_loop_end as usize,
+                _ => panic!("Unknown control flow helper: {}", name),
+            };
+            ee.add_global_mapping(&func, func_addr);
+        }
+
+        func
+    }
+
+    /// Declare a string helper function
+    fn declare_string_helper(&mut self, name: &str) -> FunctionValue<'ctx> {
+        // Check if already declared
+        if let Some(func) = self.module.get_function(name) {
+            return func;
+        }
+
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let i64_type = self.context.i64_type();
+
+        // String helper: takes data_stack, data_len, memory, here, string_ptr, len
+        let fn_type = self.context.void_type().fn_type(
+            &[
+                ptr_type.into(), // data_stack
+                ptr_type.into(), // data_len
+                ptr_type.into(), // memory
+                ptr_type.into(), // here
+                ptr_type.into(), // string_ptr
+                i64_type.into(), // len
+            ],
+            false,
+        );
+
+        let func = self.module.add_function(name, fn_type, None);
+
+        // Register address with execution engine
+        if let Some(ee) = &self.execution_engine {
+            let func_addr = match name {
+                "forth_alloc_string" => forth_alloc_string as usize,
+                _ => panic!("Unknown string helper: {}", name),
+            };
+            ee.add_global_mapping(&func, func_addr);
+        }
+
+        func
+    }
+
+    /// Declare a variable helper function
+    fn declare_var_helper(&mut self, name: &str) -> FunctionValue<'ctx> {
+        // Check if already declared
+        if let Some(func) = self.module.get_function(name) {
+            return func;
+        }
+
+        let ptr_type = self.context.ptr_type(AddressSpace::default());
+        let i64_type = self.context.i64_type();
+
+        // Variable helper: takes data_stack, data_len, offset
+        let fn_type = self.context.void_type().fn_type(
+            &[
+                ptr_type.into(), // data_stack
+                ptr_type.into(), // data_len
+                i64_type.into(), // offset
+            ],
+            false,
+        );
+
+        let func = self.module.add_function(name, fn_type, None);
+
+        // Register address with execution engine
+        if let Some(ee) = &self.execution_engine {
+            let func_addr = match name {
+                "forth_variable_addr" => forth_variable_addr as usize,
+                _ => panic!("Unknown variable helper: {}", name),
+            };
+            ee.add_global_mapping(&func, func_addr);
+        }
+
+        func
     }
 
     /// Get a JIT-compiled function pointer
@@ -711,6 +1147,44 @@ pub extern "C" fn forth_cr(
     println!();
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_key(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        use std::io::Read;
+        let mut buffer = [0u8; 1];
+        if std::io::stdin().read_exact(&mut buffer).is_ok() {
+            stack_push(data_stack, data_len, buffer[0] as i64);
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_type(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        if let (Some(len), Some(addr)) = (stack_pop(data_stack, data_len), stack_pop(data_stack, data_len)) {
+            let addr = addr as usize;
+            let len = len as usize;
+            if addr + len <= 65536 {
+                for i in 0..len {
+                    print!("{}", *memory.add(addr + i) as char);
+                }
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+            }
+        }
+    }
+}
+
 // Memory operations
 #[unsafe(no_mangle)]
 pub extern "C" fn forth_fetch(
@@ -814,9 +1288,175 @@ pub extern "C" fn forth_i(
     _memory: *mut u8, _here: *mut usize,
 ) {
     unsafe {
-        // Get the current loop index (top of loop stack)
-        if let Some(index) = stack_peek(loop_stack, loop_len, 0) {
+        // Get the current loop index (top of loop stack - 2)
+        if *loop_len >= 2 {
+            let index = *loop_stack.add(*loop_len - 2);
             stack_push(data_stack, data_len, index);
         }
+    }
+}
+
+// Control flow helper functions
+
+/// Pop from data stack and return 1 if zero, 0 otherwise
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_branch_if_zero(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) -> i64 {
+    unsafe {
+        if let Some(val) = stack_pop(data_stack, data_len) {
+            if val == 0 { 1 } else { 0 }
+        } else {
+            0
+        }
+    }
+}
+
+/// DO loop setup: pop limit and start from data stack, push to loop stack
+/// Stack: ( limit start -- ) Loop stack: ( -- start limit )
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_do_setup(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    loop_stack: *mut i64, loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // Pop start (TOS), then limit
+        if let (Some(start), Some(limit)) = (stack_pop(data_stack, data_len), stack_pop(data_stack, data_len)) {
+            // Push in order: start first (at loop_len-2), then limit (at loop_len-1)
+            stack_push(loop_stack, loop_len, start);
+            stack_push(loop_stack, loop_len, limit);
+        }
+    }
+}
+
+/// ?DO loop setup: like DO but returns 1 if should skip loop, 0 otherwise
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_qdo_setup(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    loop_stack: *mut i64, loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) -> i64 {
+    unsafe {
+        if let (Some(start), Some(limit)) = (stack_pop(data_stack, data_len), stack_pop(data_stack, data_len)) {
+            if start == limit {
+                1  // Skip loop
+            } else {
+                stack_push(loop_stack, loop_len, start);
+                stack_push(loop_stack, loop_len, limit);
+                0  // Don't skip
+            }
+        } else {
+            0
+        }
+    }
+}
+
+/// LOOP: increment counter and return 1 if done, 0 if should continue
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_loop_check(
+    _data_stack: *mut i64, _data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    loop_stack: *mut i64, loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) -> i64 {
+    unsafe {
+        if *loop_len >= 2 {
+            let counter_ptr = loop_stack.add(*loop_len - 2);
+            let limit = *loop_stack.add(*loop_len - 1);
+            *counter_ptr += 1;
+            if *counter_ptr == limit { 1 } else { 0 }
+        } else {
+            1  // Error, exit loop
+        }
+    }
+}
+
+/// +LOOP: add increment from TOS to counter and return 1 if done, 0 if should continue
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_plusloop_check(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    loop_stack: *mut i64, loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) -> i64 {
+    unsafe {
+        if let Some(increment) = stack_pop(data_stack, data_len) {
+            if *loop_len >= 2 {
+                let counter_ptr = loop_stack.add(*loop_len - 2);
+                let limit = *loop_stack.add(*loop_len - 1);
+                let old_counter = *counter_ptr;
+                *counter_ptr += increment;
+
+                // Check if crossed the boundary
+                if increment >= 0 {
+                    if *counter_ptr >= limit && old_counter < limit { 1 } else { 0 }
+                } else {
+                    if *counter_ptr < limit && old_counter >= limit { 1 } else { 0 }
+                }
+            } else {
+                1  // Error, exit loop
+            }
+        } else {
+            1  // Error, exit loop
+        }
+    }
+}
+
+/// Loop end: pop limit and counter from loop stack
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_loop_end(
+    _data_stack: *mut i64, _data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    loop_stack: *mut i64, loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        if *loop_len >= 2 {
+            *loop_len -= 2;
+        }
+    }
+}
+
+/// Allocate string in memory and push (addr len) onto stack
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_alloc_string(
+    data_stack: *mut i64, data_len: *mut usize,
+    memory: *mut u8, here: *mut usize,
+    string_ptr: *const u8, len: i64,
+) {
+    unsafe {
+        let len_usize = len as usize;
+        let here_val = *here;
+
+        // Copy string to memory
+        if here_val + len_usize <= 65536 {
+            std::ptr::copy_nonoverlapping(string_ptr, memory.add(here_val), len_usize);
+
+            // Push address and length onto stack
+            stack_push(data_stack, data_len, here_val as i64);
+            stack_push(data_stack, data_len, len);
+
+            // Update HERE pointer
+            *here = here_val + len_usize;
+        }
+    }
+}
+
+/// Push variable address onto stack
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_variable_addr(
+    data_stack: *mut i64, data_len: *mut usize,
+    offset: i64,
+) {
+    unsafe {
+        // Variables start at offset 20000 in memory
+        let var_addr = 20000 + offset;
+        stack_push(data_stack, data_len, var_addr);
     }
 }

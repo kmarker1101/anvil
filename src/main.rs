@@ -27,7 +27,12 @@ fn main() -> Result<()> {
     for file_path in args.iter().skip(1) {
         match load_file(&mut executor, file_path) {
             Ok(()) => println!("Loaded: {}", file_path),
-            Err(e) => eprintln!("Error loading {}: {}", file_path, e),
+            Err(e) => {
+                if e == "EXIT" {
+                    return Ok(());
+                }
+                eprintln!("Error loading {}: {}", file_path, e)
+            },
         }
     }
 
@@ -125,7 +130,13 @@ fn main() -> Result<()> {
                     let file_path = input[8..].trim();
                     match load_file(&mut executor, file_path) {
                         Ok(()) => println!(" ok"),
-                        Err(e) => println!(" Error loading {}: {}", file_path, e),
+                        Err(e) => {
+                            if e == "EXIT" {
+                                println!(" Goodbye!");
+                                break;
+                            }
+                            println!(" Error loading {}: {}", file_path, e)
+                        },
                     }
                     continue;
                 }
@@ -183,6 +194,11 @@ fn load_file(executor: &mut Executor, file_path: &str) -> std::result::Result<()
     let program = parser.parse().map_err(|e| e.to_string())?;
 
     executor.execute_program(program)?;
+
+    // Check if BYE was executed
+    if executor.should_exit() {
+        return Err("EXIT".to_string());
+    }
 
     Ok(())
 }

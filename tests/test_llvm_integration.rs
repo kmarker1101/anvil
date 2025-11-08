@@ -2,7 +2,7 @@
 
 use forth::llvm_jit::LLVMCompiler;
 use forth::lexer::Lexer;
-use forth::parser::{Parser, Definition};
+use forth::parser::Parser;
 use forth::compiler::Compiler;
 use inkwell::context::Context;
 
@@ -49,6 +49,7 @@ fn test_parse_and_execute_word() {
             &mut loop_len,
             memory.as_mut_ptr(),
             &mut here,
+            &mut false,
         );
     }
 

@@ -532,6 +532,8 @@ pub struct Executor {
     vm: VM,
     compiler: Compiler,
     variables: HashMap<String, i64>, // variable name -> memory address
+    llvm_compiler: crate::llvm_jit::LLVMCompiler<'static>,
+    should_exit: bool,
 }
 
 impl Default for Executor {
@@ -542,10 +544,17 @@ impl Default for Executor {
 
 impl Executor {
     pub fn new() -> Self {
+        // Create a leaked context for 'static lifetime
+        let context = Box::leak(Box::new(inkwell::context::Context::create()));
+        let llvm_compiler = crate::llvm_jit::LLVMCompiler::new_jit(context, "forth_jit")
+            .expect("Failed to create LLVM JIT compiler");
+
         Executor {
             vm: VM::new(),
             compiler: Compiler::new(),
             variables: HashMap::new(),
+            llvm_compiler,
+            should_exit: false,
         }
     }
 
@@ -574,9 +583,12 @@ impl Executor {
 
     /// Compile and execute a program
     pub fn execute_program(&mut self, program: Program) -> Result<(), String> {
-        // Compile
+        // Compile to Forth bytecode
         self.compiler.compile_program(program)
             .map_err(|e| e.to_string())?;
+
+        // Compile all words to LLVM
+        self.compile_all_words_to_llvm()?;
 
         // Execute any immediate instructions (from standalone expressions)
         if self.compiler.has_immediate_instructions() {
@@ -587,17 +599,187 @@ impl Executor {
         Ok(())
     }
 
-    /// Execute a specific word
-    pub fn execute_word(&mut self, name: &str) -> Result<(), String> {
-        let word = self.compiler.get_word(name)
-            .ok_or_else(|| format!("Word not found: {}", name))?
-            .clone();
+    /// Compile all Forth words to LLVM
+    fn compile_all_words_to_llvm(&mut self) -> Result<(), String> {
+        // Get list of all word names
+        let word_names = self.compiler.words();
 
-        self.execute_instructions(&word.instructions)
+        for name in word_names {
+            // Get the word
+            if let Some(word) = self.compiler.get_word(&name) {
+                let instructions = word.instructions.clone();
+                // Compile to LLVM (this will skip if already compiled)
+                self.llvm_compiler.compile_word(&name, &instructions)?;
+            }
+        }
+
+        Ok(())
     }
 
-    /// Execute a sequence of instructions
+    /// Execute a specific word
+    pub fn execute_word(&mut self, name: &str) -> Result<(), String> {
+        // Make sure the word exists in the compiler and get its instructions
+        let instructions = {
+            let word = self.compiler.get_word(name)
+                .ok_or_else(|| format!("Word not found: {}", name))?;
+            word.instructions.clone()
+        };
+
+        // Compile all words to LLVM (including dependencies)
+        self.compile_all_words_to_llvm()?;
+
+        // Ensure the target word is compiled
+        self.llvm_compiler.compile_word(name, &instructions)?;
+
+        // Get the JIT-compiled function
+        let func = self.llvm_compiler.get_function(name)?;
+
+        // Prepare stacks and memory as raw arrays
+        let mut data_stack = vec![0i64; 256];
+        let mut return_stack = vec![0i64; 256];
+        let mut loop_stack = vec![0i64; 256];
+        let mut memory = vec![0u8; 65536];
+
+        // Copy VM state to arrays
+        for (i, &val) in self.vm.data_stack.iter().enumerate() {
+            data_stack[i] = val;
+        }
+        let mut data_len = self.vm.data_stack.depth();
+
+        for (i, &val) in self.vm.return_stack.iter().enumerate() {
+            return_stack[i] = val;
+        }
+        let mut return_len = self.vm.return_stack.depth();
+
+        for (i, &val) in self.vm.loop_stack.iter().enumerate() {
+            loop_stack[i] = val;
+        }
+        let mut loop_len = self.vm.loop_stack.depth();
+
+        // Copy memory
+        memory.copy_from_slice(&self.vm.memory);
+        let mut here = self.vm.here;
+
+        // Execute the JIT-compiled function
+        unsafe {
+            func(
+                data_stack.as_mut_ptr(),
+                &mut data_len,
+                return_stack.as_mut_ptr(),
+                &mut return_len,
+                loop_stack.as_mut_ptr(),
+                &mut loop_len,
+                memory.as_mut_ptr(),
+                &mut here,
+                &mut self.should_exit,
+            );
+        }
+
+        // Copy results back to VM
+        self.vm.data_stack = crate::primitives::Stack::new();
+        for i in 0..data_len {
+            self.vm.data_stack.push(data_stack[i]);
+        }
+
+        self.vm.return_stack = crate::primitives::ReturnStack::new();
+        for i in 0..return_len {
+            self.vm.return_stack.push(return_stack[i]);
+        }
+
+        self.vm.loop_stack = crate::primitives::Stack::new();
+        for i in 0..loop_len {
+            self.vm.loop_stack.push(loop_stack[i]);
+        }
+
+        self.vm.memory.copy_from_slice(&memory);
+        self.vm.here = here;
+
+        Ok(())
+    }
+
+    /// Execute a sequence of instructions using LLVM JIT
     fn execute_instructions(&mut self, instructions: &[Instruction]) -> Result<(), String> {
+        // First, ensure all words referenced in the instructions are compiled
+        self.compile_all_words_to_llvm()?;
+
+        // Compile instructions to LLVM and execute
+        // Use a unique name for each execution
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static COUNTER: AtomicUsize = AtomicUsize::new(0);
+        let exec_name = format!("_exec_{}", COUNTER.fetch_add(1, Ordering::Relaxed));
+
+        // Compile to LLVM
+        self.llvm_compiler.compile_word(&exec_name, instructions)?;
+
+        // Get the compiled function
+        let func = self.llvm_compiler.get_function(&exec_name)?;
+
+        // Prepare stacks and memory as raw arrays
+        let mut data_stack = vec![0i64; 256];
+        let mut return_stack = vec![0i64; 256];
+        let mut loop_stack = vec![0i64; 256];
+        let mut memory = vec![0u8; 65536];
+
+        // Copy VM state to arrays
+        for (i, &val) in self.vm.data_stack.iter().enumerate() {
+            data_stack[i] = val;
+        }
+        let mut data_len = self.vm.data_stack.depth();
+
+        for (i, &val) in self.vm.return_stack.iter().enumerate() {
+            return_stack[i] = val;
+        }
+        let mut return_len = self.vm.return_stack.depth();
+
+        for (i, &val) in self.vm.loop_stack.iter().enumerate() {
+            loop_stack[i] = val;
+        }
+        let mut loop_len = self.vm.loop_stack.depth();
+
+        // Copy memory
+        memory.copy_from_slice(&self.vm.memory);
+        let mut here = self.vm.here;
+
+        // Execute the JIT-compiled function
+        unsafe {
+            func(
+                data_stack.as_mut_ptr(),
+                &mut data_len,
+                return_stack.as_mut_ptr(),
+                &mut return_len,
+                loop_stack.as_mut_ptr(),
+                &mut loop_len,
+                memory.as_mut_ptr(),
+                &mut here,
+                &mut self.should_exit,
+            );
+        }
+
+        // Copy results back to VM
+        self.vm.data_stack = crate::primitives::Stack::new();
+        for i in 0..data_len {
+            self.vm.data_stack.push(data_stack[i]);
+        }
+
+        self.vm.return_stack = crate::primitives::ReturnStack::new();
+        for i in 0..return_len {
+            self.vm.return_stack.push(return_stack[i]);
+        }
+
+        self.vm.loop_stack = crate::primitives::Stack::new();
+        for i in 0..loop_len {
+            self.vm.loop_stack.push(loop_stack[i]);
+        }
+
+        self.vm.memory.copy_from_slice(&memory);
+        self.vm.here = here;
+
+        Ok(())
+    }
+
+    /// OLD INTERPRETER VERSION - keeping for reference, will be removed
+    #[allow(dead_code)]
+    fn execute_instructions_interpreter(&mut self, instructions: &[Instruction]) -> Result<(), String> {
         let mut pc = 0; // Program counter
 
         while pc < instructions.len() {
@@ -770,6 +952,11 @@ impl Executor {
     /// Get mutable reference to VM
     pub fn vm_mut(&mut self) -> &mut VM {
         &mut self.vm
+    }
+
+    /// Check if BYE was executed
+    pub fn should_exit(&self) -> bool {
+        self.should_exit
     }
 
     /// Get reference to compiler

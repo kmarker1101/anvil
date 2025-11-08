@@ -97,6 +97,10 @@ impl ReturnStack {
     pub fn clear(&mut self) {
         self.data.clear();
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &i64> {
+        self.data.iter()
+    }
 }
 
 // ============================================================================
