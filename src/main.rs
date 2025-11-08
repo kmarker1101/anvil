@@ -9,6 +9,9 @@ use std::env;
 use std::fs;
 
 fn main() -> Result<()> {
+    // Reset BYE flag in case of reentry
+    forth::jit::reset_bye_flag();
+
     println!("Anvil Forth v0.1.0");
     println!("Type .help for help, bye to exit");
     println!();
@@ -26,7 +29,13 @@ fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
     for file_path in args.iter().skip(1) {
         match load_file(&mut executor, file_path) {
-            Ok(()) => println!("Loaded: {}", file_path),
+            Ok(()) => {
+                println!("Loaded: {}", file_path);
+                // Check if BYE was called during file loading
+                if forth::jit::should_exit_after_bye() {
+                    return Ok(());
+                }
+            },
             Err(e) => eprintln!("Error loading {}: {}", file_path, e),
         }
     }
@@ -175,6 +184,9 @@ fn load_file(executor: &mut Executor, file_path: &str) -> std::result::Result<()
     // Convert to uppercase for case-insensitive word matching
     let processed_upper = processed.to_uppercase();
 
+    // Check if the processed content ends with BYE (after all includes)
+    let has_bye = processed_upper.trim().ends_with("BYE");
+
     // Process the file
     let mut lexer = Lexer::new(&processed_upper);
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
@@ -183,6 +195,11 @@ fn load_file(executor: &mut Executor, file_path: &str) -> std::result::Result<()
     let program = parser.parse().map_err(|e| e.to_string())?;
 
     executor.execute_program(program)?;
+
+    // If file ended with BYE, set the flag so main() will exit
+    if has_bye {
+        forth::jit::set_bye_flag();
+    }
 
     Ok(())
 }

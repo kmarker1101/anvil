@@ -41,6 +41,18 @@ impl Stack {
         self.data.len()
     }
 
+    pub fn set_depth(&mut self, new_depth: usize) {
+        self.data.truncate(new_depth);
+        while self.data.len() < new_depth {
+            self.data.push(0);
+        }
+    }
+
+    /// Unsafe: directly set the Vec length (for JIT-compiled code that writes through as_mut_ptr)
+    pub unsafe fn set_len_unsafe(&mut self, new_len: usize) {
+        unsafe { self.data.set_len(new_len); }
+    }
+
     pub fn clear(&mut self) {
         self.data.clear();
     }
@@ -57,6 +69,16 @@ impl Stack {
     /// Iterate over stack values from bottom to top
     pub fn iter(&self) -> impl Iterator<Item = &i64> {
         self.data.iter()
+    }
+
+    /// Get a mutable pointer to the underlying data (for JIT compilation)
+    pub fn as_mut_ptr(&mut self) -> *mut i64 {
+        self.data.as_mut_ptr()
+    }
+
+    /// Get the current capacity
+    pub fn capacity(&self) -> usize {
+        self.data.capacity()
     }
 }
 
@@ -94,8 +116,25 @@ impl ReturnStack {
         self.data.len()
     }
 
+    pub fn set_depth(&mut self, new_depth: usize) {
+        self.data.truncate(new_depth);
+        while self.data.len() < new_depth {
+            self.data.push(0);
+        }
+    }
+
+    /// Unsafe: directly set the Vec length (for JIT-compiled code that writes through as_mut_ptr)
+    pub unsafe fn set_len_unsafe(&mut self, new_len: usize) {
+        unsafe { self.data.set_len(new_len); }
+    }
+
     pub fn clear(&mut self) {
         self.data.clear();
+    }
+
+    /// Get a mutable pointer to the underlying data (for JIT compilation)
+    pub fn as_mut_ptr(&mut self) -> *mut i64 {
+        self.data.as_mut_ptr()
     }
 }
 

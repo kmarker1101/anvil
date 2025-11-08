@@ -24,4 +24,4 @@ INCLUDE examples/math.fth
 \ Print final report
 REPORT
 
-BYE
+\ BYE

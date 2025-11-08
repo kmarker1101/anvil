@@ -192,6 +192,11 @@ impl Compiler {
         Ok(())
     }
 
+    /// Compile a single definition (public wrapper for compile_definition)
+    pub fn compile_single_definition(&mut self, definition: Definition) -> Result<(), CompileError> {
+        self.compile_definition(definition)
+    }
+
     /// Compile a single definition
     fn compile_definition(&mut self, definition: Definition) -> Result<(), CompileError> {
         match definition {
@@ -522,6 +527,21 @@ impl Compiler {
     pub fn has_immediate_instructions(&self) -> bool {
         !self.immediate_instructions.is_empty()
     }
+
+    /// Get the dictionary for JIT compilation (needed for resolving Call instructions)
+    pub fn dictionary_for_jit(&self) -> std::collections::HashMap<String, CompiledWord> {
+        self.dictionary.clone()
+    }
+
+    /// Update the instructions for a word (used for variable allocation)
+    pub fn update_word_instructions(&mut self, name: &str, new_instructions: Vec<Instruction>) -> Result<(), String> {
+        if let Some(word) = self.dictionary.get_mut(name) {
+            word.instructions = new_instructions;
+            Ok(())
+        } else {
+            Err(format!("Word not found: {}", name))
+        }
+    }
 }
 
 // ============================================================================
@@ -532,6 +552,8 @@ pub struct Executor {
     vm: VM,
     compiler: Compiler,
     variables: HashMap<String, i64>, // variable name -> memory address
+    jit: crate::jit::ForthJIT,        // JIT compiler for native code generation
+    should_exit: bool,                // Set to true when BYE is encountered
 }
 
 impl Default for Executor {
@@ -542,10 +564,15 @@ impl Default for Executor {
 
 impl Executor {
     pub fn new() -> Self {
+        let jit = crate::jit::ForthJIT::new_jit()
+            .expect("Failed to initialize JIT compiler");
+
         Executor {
             vm: VM::new(),
             compiler: Compiler::new(),
             variables: HashMap::new(),
+            jit,
+            should_exit: false,
         }
     }
 
@@ -574,30 +601,276 @@ impl Executor {
 
     /// Compile and execute a program
     pub fn execute_program(&mut self, program: Program) -> Result<(), String> {
-        // Compile
-        self.compiler.compile_program(program)
-            .map_err(|e| e.to_string())?;
+        // Compile definitions one by one, allocating variables as we go
+        for definition in program.definitions {
+            // Compile this definition
+            self.compiler.compile_single_definition(definition)
+                .map_err(|e| e.to_string())?;
 
-        // Execute any immediate instructions (from standalone expressions)
-        if self.compiler.has_immediate_instructions() {
+            // Immediately allocate any variables in this definition
+            self.allocate_variables()?;
+        }
+
+        // JIT compile ALL words in the dictionary (skip already-compiled ones)
+        let dictionary = self.compiler.dictionary_for_jit();
+        for (name, word) in dictionary.iter() {
+            if !self.jit.has_function(name) {
+                self.jit.compile_word(name, &word.instructions, Some(&dictionary))?;
+            }
+        }
+
+        // If there are immediate instructions, compile them BEFORE finalization
+        let temp_name = if self.compiler.has_immediate_instructions() {
             let instructions = self.compiler.take_immediate_instructions();
-            self.execute_instructions(&instructions)?;
+            static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let temp_name = format!("__temp_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+            self.jit.compile_word(&temp_name, &instructions, Some(&dictionary))?;
+            Some(temp_name)
+        } else {
+            None
+        };
+
+        // Finalize all JIT functions once
+        self.jit.finalize_all()?;
+
+        // Execute the immediate instructions if they exist
+        if let Some(temp_name) = temp_name {
+            let func_ptr = self.jit.finalize_jit(&temp_name)?;
+
+            // Prepare stack and memory pointers
+            let mut data_len = self.vm.data_stack.depth();
+            let mut return_len = self.vm.return_stack.depth();
+            let mut loop_len = self.vm.loop_stack.depth();
+
+            // Cast and call the JIT-compiled function
+            type JitFunc = unsafe extern "C" fn(
+                *mut i64, *mut usize,
+                *mut i64, *mut usize,
+                *mut i64, *mut usize,
+                *mut u8,
+                *mut usize
+            );
+            let func: JitFunc = unsafe { std::mem::transmute(func_ptr) };
+
+            unsafe {
+                func(
+                    self.vm.data_stack.as_mut_ptr(), &mut data_len,
+                    self.vm.return_stack.as_mut_ptr(), &mut return_len,
+                    self.vm.loop_stack.as_mut_ptr(), &mut loop_len,
+                    self.vm.memory.as_mut_ptr(),
+                    &mut self.vm.here
+                );
+            }
+
+            // Update stack lengths with bounds checking
+            const MAX_STACK_SIZE: usize = 1024;
+
+            // Log all stack lengths for debugging
+            let debug = std::env::var("FORTH_DEBUG").is_ok();
+            if debug {
+                eprintln!("execute_program immediate: data_len={}, return_len={}, loop_len={}",
+                         data_len, return_len, loop_len);
+            }
+
+            if data_len > MAX_STACK_SIZE {
+                eprintln!("WARNING: Invalid data stack length: {} (max {}) in immediate code",
+                         data_len, MAX_STACK_SIZE);
+                data_len = self.vm.data_stack.depth();
+            }
+            if return_len > MAX_STACK_SIZE {
+                eprintln!("WARNING: Invalid return stack length: {} (max {}) in immediate code",
+                         return_len, MAX_STACK_SIZE);
+                return_len = self.vm.return_stack.depth();
+            }
+            if loop_len > MAX_STACK_SIZE {
+                eprintln!("WARNING: Invalid loop stack length: {} (max {}) in immediate code",
+                         loop_len, MAX_STACK_SIZE);
+                loop_len = self.vm.loop_stack.depth();
+            }
+
+            unsafe {
+                self.vm.data_stack.set_len_unsafe(data_len);
+                self.vm.return_stack.set_len_unsafe(return_len);
+                self.vm.loop_stack.set_len_unsafe(loop_len);
+            }
         }
 
         Ok(())
     }
 
-    /// Execute a specific word
-    pub fn execute_word(&mut self, name: &str) -> Result<(), String> {
-        let word = self.compiler.get_word(name)
-            .ok_or_else(|| format!("Word not found: {}", name))?
-            .clone();
+    /// Allocate memory for all variables and replace VariableAddr with Literal instructions
+    fn allocate_variables(&mut self) -> Result<(), String> {
+        // We need to modify the compiler's dictionary, so we can't iterate and modify at the same time
+        // Get all word names first
+        let word_names: Vec<String> = self.compiler.words();
 
-        self.execute_instructions(&word.instructions)
+        for name in word_names {
+            if let Some(word) = self.compiler.get_word(&name) {
+                let instructions = word.instructions.clone();
+                let mut modified = false;
+                let new_instructions: Vec<Instruction> = instructions.iter().map(|inst| {
+                    if let Instruction::VariableAddr(var_name) = inst {
+                        modified = true;
+                        // Get or allocate address for variable
+                        let addr = if let Some(&existing_addr) = self.variables.get(var_name) {
+                            existing_addr
+                        } else {
+                            // Allocate 8 bytes for the variable (i64)
+                            let addr = self.vm.here as i64;
+                            self.vm.here += 8;
+                            self.variables.insert(var_name.clone(), addr);
+                            addr
+                        };
+                        Instruction::Literal(addr)
+                    } else {
+                        inst.clone()
+                    }
+                }).collect();
+
+                if modified {
+                    // Update the word in the dictionary
+                    self.compiler.update_word_instructions(&name, new_instructions)?;
+                }
+            }
+        }
+        Ok(())
     }
 
-    /// Execute a sequence of instructions
-    fn execute_instructions(&mut self, instructions: &[Instruction]) -> Result<(), String> {
+    /// Execute a specific word using its JIT function (compiles if needed)
+    pub fn execute_word(&mut self, name: &str) -> Result<(), String> {
+        // Check if the word has been JIT compiled, if not compile it now
+        if !self.jit.has_function(name) {
+            // Get the word from the dictionary
+            let word = self.compiler.get_word(name)
+                .ok_or_else(|| format!("Word {} not found", name))?;
+
+            // Compile it
+            let dictionary = self.compiler.dictionary_for_jit();
+            self.jit.compile_word(name, &word.instructions, Some(&dictionary))?;
+
+            // Finalize the new function
+            self.jit.finalize_all()?;
+        }
+
+        // Get the function pointer for the compiled function
+        let func_ptr = self.jit.finalize_jit(name)?;
+
+        // Prepare stack and memory pointers
+        let mut data_len = self.vm.data_stack.depth();
+        let mut return_len = self.vm.return_stack.depth();
+        let mut loop_len = self.vm.loop_stack.depth();
+
+        // Cast and call the JIT-compiled function
+        type JitFunc = unsafe extern "C" fn(
+            *mut i64, *mut usize,
+            *mut i64, *mut usize,
+            *mut i64, *mut usize,
+            *mut u8,
+            *mut usize
+        );
+        let func: JitFunc = unsafe { std::mem::transmute(func_ptr) };
+
+        unsafe {
+            func(
+                self.vm.data_stack.as_mut_ptr(), &mut data_len,
+                self.vm.return_stack.as_mut_ptr(), &mut return_len,
+                self.vm.loop_stack.as_mut_ptr(), &mut loop_len,
+                self.vm.memory.as_mut_ptr(),
+                &mut self.vm.here
+            );
+        }
+
+        // Update stack lengths with bounds checking to prevent corruption
+        // Check for obviously corrupt values (very large numbers indicate memory corruption)
+        const MAX_STACK_SIZE: usize = 1024;  // Reasonable maximum
+
+        // Log all stack lengths for debugging
+        let debug = std::env::var("FORTH_DEBUG").is_ok();
+        if debug {
+            eprintln!("execute_word '{}': data_len={}, return_len={}, loop_len={}",
+                     name, data_len, return_len, loop_len);
+        }
+
+        if data_len > MAX_STACK_SIZE {
+            eprintln!("WARNING: Invalid data stack length: {} (max {}) in word '{}'",
+                     data_len, MAX_STACK_SIZE, name);
+            data_len = self.vm.data_stack.depth();  // Reset to current depth
+        }
+        if return_len > MAX_STACK_SIZE {
+            eprintln!("WARNING: Invalid return stack length: {} (max {}) in word '{}'",
+                     return_len, MAX_STACK_SIZE, name);
+            return_len = self.vm.return_stack.depth();
+        }
+        if loop_len > MAX_STACK_SIZE {
+            eprintln!("WARNING: Invalid loop stack length: {} (max {}) in word '{}'",
+                     loop_len, MAX_STACK_SIZE, name);
+            loop_len = self.vm.loop_stack.depth();
+        }
+
+        unsafe {
+            self.vm.data_stack.set_len_unsafe(data_len);
+            self.vm.return_stack.set_len_unsafe(return_len);
+            self.vm.loop_stack.set_len_unsafe(loop_len);
+        }
+
+        Ok(())
+    }
+
+    /// JIT compile and execute a sequence of instructions
+    fn execute_instructions_jit(&mut self, instructions: &[Instruction]) -> Result<(), String> {
+        // Generate a unique temporary name for this code snippet
+        static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let temp_name = format!("__temp_{}", COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst));
+
+        // Get the dictionary for resolving Call instructions
+        let dictionary = self.compiler.dictionary_for_jit();
+
+        // JIT compile the instructions (variables should already be allocated)
+        self.jit.compile_word(&temp_name, instructions, Some(&dictionary))?;
+
+        // Finalize this one function
+        self.jit.finalize_all()?;
+
+        let func_ptr = self.jit.finalize_jit(&temp_name)?;
+
+        // Prepare stack and memory pointers
+        let mut data_len = self.vm.data_stack.depth();
+        let mut return_len = self.vm.return_stack.depth();
+        let mut loop_len = self.vm.loop_stack.depth();
+
+        // Cast and call the JIT-compiled function
+        type JitFunc = unsafe extern "C" fn(
+            *mut i64, *mut usize,  // data stack
+            *mut i64, *mut usize,  // return stack
+            *mut i64, *mut usize,  // loop stack
+            *mut u8,               // memory
+            *mut usize             // here pointer
+        );
+        let func: JitFunc = unsafe { std::mem::transmute(func_ptr) };
+
+        unsafe {
+            func(
+                self.vm.data_stack.as_mut_ptr(), &mut data_len,
+                self.vm.return_stack.as_mut_ptr(), &mut return_len,
+                self.vm.loop_stack.as_mut_ptr(), &mut loop_len,
+                self.vm.memory.as_mut_ptr(),
+                &mut self.vm.here
+            );
+        }
+
+        // Update stack lengths (unsafe because we're trusting the JIT code wrote valid data)
+        unsafe {
+            self.vm.data_stack.set_len_unsafe(data_len);
+            self.vm.return_stack.set_len_unsafe(return_len);
+            self.vm.loop_stack.set_len_unsafe(loop_len);
+        }
+
+        Ok(())
+    }
+
+    /// OLD INTERPRETER - Kept for reference, should be removed
+    #[allow(dead_code)]
+    fn execute_instructions_interpreter(&mut self, instructions: &[Instruction]) -> Result<(), String> {
         let mut pc = 0; // Program counter
 
         while pc < instructions.len() {
@@ -617,7 +890,7 @@ impl Executor {
                     let called_word = self.compiler.get_word(word)
                         .ok_or_else(|| format!("Word not found: {}", word))?
                         .clone();
-                    self.execute_instructions(&called_word.instructions)?;
+                    self.execute_instructions_interpreter(&called_word.instructions)?;
                     pc += 1;
                 }
 
