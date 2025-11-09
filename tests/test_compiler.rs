@@ -10,6 +10,7 @@ fn compile_and_run(input: &str) -> Result<Executor, String> {
     let program = parser.parse().map_err(|e| e.to_string())?;
 
     let mut executor = Executor::new();
+    executor.vm_mut().set_input(input);
     executor.execute_program(program)?;
 
     Ok(executor)
@@ -23,6 +24,7 @@ fn compile_and_run_with_stdlib(input: &str) -> Result<Executor, String> {
     let program = parser.parse().map_err(|e| e.to_string())?;
 
     let mut executor = Executor::with_stdlib()?;
+    executor.vm_mut().set_input(input);
     executor.execute_program(program)?;
 
     Ok(executor)
@@ -1218,4 +1220,377 @@ fn compile_and_run_with_stdlib(input: &str) -> Result<Executor, String> {
         let mut executor = compile_and_run(": TEST #10 $10 + ; TEST").unwrap();
 
         assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 26); // 10 + 16
+    }
+
+    // ============================================================================
+    // WORD Tests
+    // ============================================================================
+
+    #[test]
+    fn test_word_parse_space_delimited() {
+        // Set input buffer to "HELLO WORLD", then parse with space delimiter
+        let input_text = "HELLO WORLD";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input_text);
+
+        // Call WORD with space delimiter (32)
+        let mut lexer = Lexer::new("#32 WORD");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // WORD should return address of counted string
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+
+        // First byte is length, then characters
+        let len = executor.vm().memory[addr] as usize;
+        assert_eq!(len, 5, "WORD should parse 'HELLO'");
+
+        // The parsed word should be "HELLO"
+        let word_bytes = &executor.vm().memory[addr + 1..addr + 1 + len];
+        let word = String::from_utf8_lossy(word_bytes);
+        assert_eq!(word, "HELLO");
+    }
+
+    #[test]
+    fn test_word_to_in_variable() {
+        let mut executor = compile_and_run(">IN @").unwrap();
+
+        // >IN should initially be 0
+        let to_in = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(to_in, 0);
+    }
+
+    #[test]
+    fn test_word_advances_to_in() {
+        let mut executor = compile_and_run("#32 WORD >IN @").unwrap();
+
+        // After parsing first word, >IN should be advanced
+        let to_in = executor.vm_mut().data_stack.pop().unwrap();
+        assert!(to_in > 0, ">IN should advance after WORD");
+    }
+
+    #[test]
+    fn test_source_returns_input_buffer() {
+        use forth::primitives::INPUT_BUFFER_ADDR;
+
+        let input = "HELLO WORLD";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input);
+
+        // Call SOURCE primitive
+        let mut lexer = Lexer::new("SOURCE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // SOURCE returns (addr len)
+        let len = executor.vm_mut().data_stack.pop().unwrap();
+        let addr = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(addr, INPUT_BUFFER_ADDR as i64, "SOURCE should return INPUT_BUFFER_ADDR");
+        assert_eq!(len, input.len() as i64, "SOURCE should return correct length");
+    }
+
+    #[test]
+    fn test_word_skip_leading_delimiters() {
+        // Multiple spaces before the word
+        let mut executor = compile_and_run("   #32 WORD").unwrap();
+
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let len = executor.vm().memory[addr] as usize;
+
+        // Should still parse "#32"
+        assert!(len > 0);
+    }
+
+    #[test]
+    fn test_word_with_custom_delimiter() {
+        // Parse until comma
+        let input = "HELLO,WORLD";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input);
+
+        // Push comma ASCII (44) as delimiter and call WORD
+        let mut lexer = Lexer::new("#44 WORD");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let len = executor.vm().memory[addr] as usize;
+
+        assert_eq!(len, 5, "Should parse 'HELLO' before comma");
+        let word_bytes = &executor.vm().memory[addr + 1..addr + 1 + len];
+        let word = String::from_utf8_lossy(word_bytes);
+        assert_eq!(word, "HELLO");
+    }
+
+    #[test]
+    fn test_word_returns_empty_at_end() {
+        use forth::primitives::Primitive;
+
+        let input = "TEST";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input);
+
+        // Parse first word to consume "TEST" - push 32 and call WORD
+        executor.vm_mut().data_stack.push(32);
+        executor.vm_mut().execute_primitive(Primitive::Word).unwrap();
+
+        // Check that we parsed "TEST"
+        let addr1 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let len1 = executor.vm().memory[addr1] as usize;
+        assert_eq!(len1, 4, "First WORD should parse 'TEST'");
+
+        // Now >IN should be at end of input
+        // Try to parse another word (should be empty since we're at end)
+        executor.vm_mut().data_stack.push(32);
+        executor.vm_mut().execute_primitive(Primitive::Word).unwrap();
+
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let len = executor.vm().memory[addr] as usize;
+
+        // When at end of input, WORD should return empty counted string
+        assert_eq!(len, 0, "WORD should return empty string at end of input");
+    }
+
+    #[test]
+    fn test_word_buffer_address() {
+        use forth::primitives::WORD_BUFFER_ADDR;
+
+        let mut executor = compile_and_run("#32 WORD").unwrap();
+
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        assert_eq!(addr, WORD_BUFFER_ADDR, "WORD should return WORD_BUFFER_ADDR");
+    }
+
+    #[test]
+    fn test_source_address() {
+        use forth::primitives::INPUT_BUFFER_ADDR;
+
+        let mut executor = compile_and_run("SOURCE DROP").unwrap();
+
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        assert_eq!(addr, INPUT_BUFFER_ADDR, "SOURCE should return INPUT_BUFFER_ADDR");
+    }
+
+    // ============================================================================
+    // SOURCE Tests
+    // ============================================================================
+
+    #[test]
+    fn test_source_pushes_two_values() {
+        let input = "TEST INPUT";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input);
+
+        let mut lexer = Lexer::new("SOURCE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // Should have 2 values on stack
+        let len = executor.vm_mut().data_stack.pop().unwrap();
+        let addr = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert!(addr > 0);
+        assert_eq!(len, input.len() as i64);
+    }
+
+    #[test]
+    fn test_source_length_changes_with_input() {
+        use forth::primitives::Primitive;
+
+        let mut executor = Executor::new();
+
+        // First input
+        executor.vm_mut().set_input("SHORT");
+        executor.vm_mut().execute_primitive(Primitive::Source).unwrap();
+        let len1 = executor.vm_mut().data_stack.pop().unwrap();
+        let _addr1 = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(len1, 5);
+
+        // Second input
+        executor.vm_mut().set_input("MUCH LONGER INPUT");
+        executor.vm_mut().execute_primitive(Primitive::Source).unwrap();
+        let len2 = executor.vm_mut().data_stack.pop().unwrap();
+        let _addr2 = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(len2, 17);
+    }
+
+    #[test]
+    fn test_source_memory_contents() {
+        use forth::primitives::INPUT_BUFFER_ADDR;
+
+        let input = "HELLO";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input);
+
+        // Verify the input is actually in memory
+        let memory_slice = &executor.vm().memory[INPUT_BUFFER_ADDR..INPUT_BUFFER_ADDR + 5];
+        assert_eq!(memory_slice, b"HELLO");
+    }
+
+    // ============================================================================
+    // >IN Tests
+    // ============================================================================
+
+    #[test]
+    fn test_to_in_is_address() {
+        use forth::primitives::TO_IN_ADDR;
+
+        let mut executor = compile_and_run(">IN").unwrap();
+
+        let addr = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(addr, TO_IN_ADDR as i64, ">IN should return TO_IN_ADDR");
+    }
+
+    #[test]
+    fn test_to_in_fetch_initial_value() {
+        let mut executor = compile_and_run(">IN @").unwrap();
+
+        let value = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(value, 0, ">IN should initially be 0");
+    }
+
+    #[test]
+    fn test_to_in_can_be_modified() {
+        let mut executor = compile_and_run(": TEST #42 >IN ! >IN @ ; TEST").unwrap();
+
+        let value = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(value, 42, ">IN should be modifiable via store");
+    }
+
+    #[test]
+    fn test_to_in_updated_by_word() {
+        use forth::primitives::Primitive;
+
+        let input = "HELLO WORLD";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input);
+
+        // Get initial >IN
+        executor.vm_mut().execute_primitive(Primitive::ToIn).unwrap();
+        let to_in_addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+
+        let mut initial_bytes = [0u8; 8];
+        initial_bytes.copy_from_slice(&executor.vm().memory[to_in_addr..to_in_addr + 8]);
+        let initial = i64::from_le_bytes(initial_bytes);
+        assert_eq!(initial, 0);
+
+        // Parse a word
+        executor.vm_mut().data_stack.push(32); // space delimiter
+        executor.vm_mut().execute_primitive(Primitive::Word).unwrap();
+        let _addr = executor.vm_mut().data_stack.pop().unwrap();
+
+        // Check >IN was updated
+        let mut updated_bytes = [0u8; 8];
+        updated_bytes.copy_from_slice(&executor.vm().memory[to_in_addr..to_in_addr + 8]);
+        let updated = i64::from_le_bytes(updated_bytes);
+        assert!(updated > 0, ">IN should advance after WORD");
+        assert_eq!(updated, 5, ">IN should be at position 5 after parsing 'HELLO'");
+    }
+
+    #[test]
+    fn test_to_in_multiple_words() {
+        use forth::primitives::Primitive;
+
+        let input = "ONE TWO THREE";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input);
+
+        // Parse first word
+        executor.vm_mut().data_stack.push(32);
+        executor.vm_mut().execute_primitive(Primitive::Word).unwrap();
+        let addr1 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let len1 = executor.vm().memory[addr1] as usize;
+        let word1_bytes = &executor.vm().memory[addr1 + 1..addr1 + 1 + len1];
+        assert_eq!(word1_bytes, b"ONE");
+
+        // Parse second word
+        executor.vm_mut().data_stack.push(32);
+        executor.vm_mut().execute_primitive(Primitive::Word).unwrap();
+        let addr2 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let len2 = executor.vm().memory[addr2] as usize;
+        let word2_bytes = &executor.vm().memory[addr2 + 1..addr2 + 1 + len2];
+        assert_eq!(word2_bytes, b"TWO");
+
+        // Parse third word
+        executor.vm_mut().data_stack.push(32);
+        executor.vm_mut().execute_primitive(Primitive::Word).unwrap();
+        let addr3 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let len3 = executor.vm().memory[addr3] as usize;
+        let word3_bytes = &executor.vm().memory[addr3 + 1..addr3 + 1 + len3];
+        assert_eq!(word3_bytes, b"THREE");
+    }
+
+    // ============================================================================
+    // Integration Tests
+    // ============================================================================
+
+    #[test]
+    fn test_source_and_to_in_together() {
+        use forth::primitives::Primitive;
+
+        let input = "TESTING";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input);
+
+        // Get SOURCE
+        executor.vm_mut().execute_primitive(Primitive::Source).unwrap();
+        let source_len = executor.vm_mut().data_stack.pop().unwrap();
+        let source_addr = executor.vm_mut().data_stack.pop().unwrap();
+
+        // Get >IN
+        executor.vm_mut().execute_primitive(Primitive::ToIn).unwrap();
+        executor.vm_mut().execute_primitive(Primitive::Fetch).unwrap();
+        let to_in_value = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(to_in_value, 0, ">IN should be 0 initially");
+        assert_eq!(source_len, 7, "SOURCE length should match input");
+        assert!(source_addr > 0, "SOURCE address should be valid");
+    }
+
+    #[test]
+    fn test_word_with_different_delimiters() {
+        use forth::primitives::Primitive;
+
+        // Test that WORD works with different delimiters
+        // Note: WORD only skips the delimiter it's given, not others
+        let input = "  AAA   BBB  ";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input);
+
+        // Parse with space delimiter - should skip leading spaces and get "AAA"
+        executor.vm_mut().data_stack.push(32);
+        executor.vm_mut().execute_primitive(Primitive::Word).unwrap();
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let len = executor.vm().memory[addr] as usize;
+        let word_bytes = &executor.vm().memory[addr + 1..addr + 1 + len];
+        assert_eq!(word_bytes, b"AAA");
+
+        // Parse with space delimiter again - should skip spaces and get "BBB"
+        executor.vm_mut().data_stack.push(32);
+        executor.vm_mut().execute_primitive(Primitive::Word).unwrap();
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let len = executor.vm().memory[addr] as usize;
+        let word_bytes = &executor.vm().memory[addr + 1..addr + 1 + len];
+        assert_eq!(word_bytes, b"BBB");
+
+        // Test with comma delimiter
+        let input2 = ",,,HELLO,,,WORLD,";
+        executor.vm_mut().set_input(input2);
+
+        // Skip leading commas and get "HELLO"
+        executor.vm_mut().data_stack.push(44);
+        executor.vm_mut().execute_primitive(Primitive::Word).unwrap();
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let len = executor.vm().memory[addr] as usize;
+        let word_bytes = &executor.vm().memory[addr + 1..addr + 1 + len];
+        assert_eq!(word_bytes, b"HELLO");
     }

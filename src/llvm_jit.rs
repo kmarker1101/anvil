@@ -61,6 +61,9 @@ llvm_primitive_mappings! {
     CharPlus => forth_char_plus,
     Chars => forth_chars,
     Base => forth_base,
+    ToIn => forth_to_in,
+    Source => forth_source,
+    Word => forth_word,
     Dup => forth_dup,
     Drop => forth_drop,
     Swap => forth_swap,
@@ -1448,6 +1451,103 @@ pub extern "C" fn forth_base(
         // BASE ( -- a-addr )
         // Push the address of the BASE variable
         stack_push(data_stack, data_len, crate::primitives::BASE_ADDR as i64);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_to_in(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // >IN ( -- a-addr )
+        // Push the address of the >IN variable
+        stack_push(data_stack, data_len, crate::primitives::TO_IN_ADDR as i64);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_source(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // SOURCE ( -- c-addr u )
+        // Push the address of the input buffer and its current length
+        stack_push(data_stack, data_len, crate::primitives::INPUT_BUFFER_ADDR as i64);
+
+        // Get input_length from memory - we need to read it from a known location
+        // For now, we'll read the length that was stored in memory during set_input
+        // The input length is stored after the input buffer
+        let input_len_addr = crate::primitives::INPUT_BUFFER_ADDR + crate::primitives::INPUT_BUFFER_SIZE;
+        let mut len_bytes = [0u8; 8];
+        for i in 0..8 {
+            len_bytes[i] = *memory.add(input_len_addr + i);
+        }
+        let input_length = i64::from_le_bytes(len_bytes);
+        stack_push(data_stack, data_len, input_length);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_word(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // WORD ( char -- c-addr )
+        let delimiter = stack_pop(data_stack, data_len).unwrap_or(32) as u8;
+
+        // Read >IN
+        let mut to_in_bytes = [0u8; 8];
+        for i in 0..8 {
+            to_in_bytes[i] = *memory.add(crate::primitives::TO_IN_ADDR + i);
+        }
+        let mut pos = i64::from_le_bytes(to_in_bytes) as usize;
+
+        // Read input_length
+        let input_len_addr = crate::primitives::INPUT_BUFFER_ADDR + crate::primitives::INPUT_BUFFER_SIZE;
+        let mut len_bytes = [0u8; 8];
+        for i in 0..8 {
+            len_bytes[i] = *memory.add(input_len_addr + i);
+        }
+        let input_length = i64::from_le_bytes(len_bytes) as usize;
+
+        // Skip leading delimiters
+        while pos < input_length && *memory.add(crate::primitives::INPUT_BUFFER_ADDR + pos) == delimiter {
+            pos += 1;
+        }
+
+        // Collect characters until delimiter
+        let start_pos = pos;
+        while pos < input_length && *memory.add(crate::primitives::INPUT_BUFFER_ADDR + pos) != delimiter {
+            pos += 1;
+        }
+        let word_len = pos - start_pos;
+
+        // Store as counted string at WORD_BUFFER_ADDR
+        *memory.add(crate::primitives::WORD_BUFFER_ADDR) = word_len.min(255) as u8;
+        if word_len > 0 {
+            for i in 0..word_len {
+                *memory.add(crate::primitives::WORD_BUFFER_ADDR + 1 + i) =
+                    *memory.add(crate::primitives::INPUT_BUFFER_ADDR + start_pos + i);
+            }
+        }
+
+        // Update >IN
+        let to_in_bytes = (pos as i64).to_le_bytes();
+        for i in 0..8 {
+            *memory.add(crate::primitives::TO_IN_ADDR + i) = to_in_bytes[i];
+        }
+
+        // Push address of counted string
+        stack_push(data_stack, data_len, crate::primitives::WORD_BUFFER_ADDR as i64);
     }
 }
 
