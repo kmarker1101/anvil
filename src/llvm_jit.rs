@@ -64,6 +64,10 @@ llvm_primitive_mappings! {
     ToIn => forth_to_in,
     Source => forth_source,
     Word => forth_word,
+    Parse => forth_parse,
+    Compare => forth_compare,
+    ToNumber => forth_to_number,
+    SToD => forth_s_to_d,
     Dup => forth_dup,
     Drop => forth_drop,
     Swap => forth_swap,
@@ -1548,6 +1552,176 @@ pub extern "C" fn forth_word(
 
         // Push address of counted string
         stack_push(data_stack, data_len, crate::primitives::WORD_BUFFER_ADDR as i64);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_parse(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // PARSE ( char -- c-addr u )
+        let delimiter = stack_pop(data_stack, data_len).unwrap_or(32) as u8;
+
+        // Read >IN
+        let mut to_in_bytes = [0u8; 8];
+        for i in 0..8 {
+            to_in_bytes[i] = *memory.add(crate::primitives::TO_IN_ADDR + i);
+        }
+        let pos = i64::from_le_bytes(to_in_bytes) as usize;
+
+        // Read input_length
+        let input_len_addr = crate::primitives::INPUT_BUFFER_ADDR + crate::primitives::INPUT_BUFFER_SIZE;
+        let mut len_bytes = [0u8; 8];
+        for i in 0..8 {
+            len_bytes[i] = *memory.add(input_len_addr + i);
+        }
+        let input_length = i64::from_le_bytes(len_bytes) as usize;
+
+        // Start parsing from current position (no skipping)
+        let start_pos = pos;
+        let mut end_pos = pos;
+
+        // Find delimiter or end of input
+        while end_pos < input_length && *memory.add(crate::primitives::INPUT_BUFFER_ADDR + end_pos) != delimiter {
+            end_pos += 1;
+        }
+
+        let parsed_len = end_pos - start_pos;
+
+        // Update >IN to position after delimiter (or end of input)
+        let new_to_in = if end_pos < input_length {
+            end_pos + 1  // Skip the delimiter
+        } else {
+            end_pos  // At end of input
+        };
+        let to_in_bytes = (new_to_in as i64).to_le_bytes();
+        for i in 0..8 {
+            *memory.add(crate::primitives::TO_IN_ADDR + i) = to_in_bytes[i];
+        }
+
+        // Push address and length
+        stack_push(data_stack, data_len, (crate::primitives::INPUT_BUFFER_ADDR + start_pos) as i64);
+        stack_push(data_stack, data_len, parsed_len as i64);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_compare(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // COMPARE ( c-addr1 u1 c-addr2 u2 -- n )
+        let u2 = stack_pop(data_stack, data_len).unwrap_or(0) as usize;
+        let c_addr2 = stack_pop(data_stack, data_len).unwrap_or(0) as usize;
+        let u1 = stack_pop(data_stack, data_len).unwrap_or(0) as usize;
+        let c_addr1 = stack_pop(data_stack, data_len).unwrap_or(0) as usize;
+
+        // Compare up to the length of the shorter string
+        let min_len = u1.min(u2);
+
+        for i in 0..min_len {
+            let byte1 = *memory.add(c_addr1 + i);
+            let byte2 = *memory.add(c_addr2 + i);
+
+            if byte1 < byte2 {
+                stack_push(data_stack, data_len, -1);
+                return;
+            } else if byte1 > byte2 {
+                stack_push(data_stack, data_len, 1);
+                return;
+            }
+        }
+
+        // Strings are equal up to min_len, compare lengths
+        if u1 == u2 {
+            stack_push(data_stack, data_len, 0);
+        } else if u1 < u2 {
+            stack_push(data_stack, data_len, -1);
+        } else {
+            stack_push(data_stack, data_len, 1);
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_to_number(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // >NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )
+        let u1 = stack_pop(data_stack, data_len).unwrap_or(0) as usize;
+        let c_addr1 = stack_pop(data_stack, data_len).unwrap_or(0) as usize;
+        let ud1 = stack_pop(data_stack, data_len).unwrap_or(0) as u64;
+
+        // Get BASE from memory
+        let mut base_bytes = [0u8; 8];
+        for i in 0..8 {
+            base_bytes[i] = *memory.add(crate::primitives::BASE_ADDR + i);
+        }
+        let base = i64::from_le_bytes(base_bytes) as u32;
+
+        if base < 2 || base > 36 {
+            // Invalid base, return unchanged
+            stack_push(data_stack, data_len, ud1 as i64);
+            stack_push(data_stack, data_len, c_addr1 as i64);
+            stack_push(data_stack, data_len, u1 as i64);
+            return;
+        }
+
+        let mut result = ud1;
+        let mut pos = 0;
+
+        // Process characters
+        while pos < u1 {
+            let ch = *memory.add(c_addr1 + pos) as char;
+
+            let digit_value = if ch.is_ascii_digit() {
+                (ch as u32) - ('0' as u32)
+            } else if ch.is_ascii_uppercase() {
+                (ch as u32) - ('A' as u32) + 10
+            } else if ch.is_ascii_lowercase() {
+                (ch as u32) - ('a' as u32) + 10
+            } else {
+                break;
+            };
+
+            if digit_value >= base {
+                break;
+            }
+
+            result = result.wrapping_mul(base as u64).wrapping_add(digit_value as u64);
+            pos += 1;
+        }
+
+        // Push results
+        stack_push(data_stack, data_len, result as i64);
+        stack_push(data_stack, data_len, (c_addr1 + pos) as i64);
+        stack_push(data_stack, data_len, (u1 - pos) as i64);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_s_to_d(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        let n = stack_pop(data_stack, data_len).unwrap_or(0);
+        let high = if n < 0 { -1 } else { 0 };
+        stack_push(data_stack, data_len, n);     // low cell
+        stack_push(data_stack, data_len, high);  // high cell
     }
 }
 

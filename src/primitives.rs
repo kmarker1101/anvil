@@ -216,6 +216,10 @@ define_primitives! {
     ToIn => ">IN": ">IN ( -- a-addr ) Address of cell containing parse position" => op_to_in,
     Source => "SOURCE": "SOURCE ( -- c-addr u ) Address and length of input buffer" => op_source,
     Word => "WORD": "WORD ( char -- c-addr ) Parse word delimited by char, return counted string" => op_word,
+    Parse => "PARSE": "PARSE ( char -- c-addr u ) Parse string delimited by char" => op_parse,
+    Compare => "COMPARE": "COMPARE ( c-addr1 u1 c-addr2 u2 -- n ) Compare two strings" => op_compare,
+    ToNumber => ">NUMBER": ">NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 ) Convert string to number" => op_to_number,
+    SToD => "S>D": "S>D ( n -- d ) Convert single to double-cell number" => op_s_to_d,
 
     // Stack manipulation
     Dup => "DUP": "DUP ( n -- n n ) Duplicate top of stack" => op_dup,
@@ -479,6 +483,162 @@ impl VM {
         // Push address of counted string
         self.data_stack.push(WORD_BUFFER_ADDR as i64);
 
+        Ok(())
+    }
+
+    fn op_parse(&mut self) -> Result<(), ForthError> {
+        // PARSE ( char -- c-addr u )
+        // Parse string delimited by char, return address and length
+        // Unlike WORD, does NOT skip leading delimiters
+
+        let delimiter = self.data_stack.pop()? as u8;
+
+        // Get current >IN position
+        let mut to_in_bytes = [0u8; 8];
+        to_in_bytes.copy_from_slice(&self.memory[TO_IN_ADDR..TO_IN_ADDR + 8]);
+        let pos = i64::from_le_bytes(to_in_bytes) as usize;
+
+        // Start parsing from current position (no skipping)
+        let start_pos = pos;
+        let mut end_pos = pos;
+
+        // Find delimiter or end of input
+        while end_pos < self.input_length && self.memory[INPUT_BUFFER_ADDR + end_pos] != delimiter {
+            end_pos += 1;
+        }
+
+        let parsed_len = end_pos - start_pos;
+
+        // Update >IN to position after delimiter (or end of input)
+        // If we found a delimiter, skip over it
+        let new_to_in = if end_pos < self.input_length {
+            end_pos + 1  // Skip the delimiter
+        } else {
+            end_pos  // At end of input
+        };
+        let to_in_bytes = (new_to_in as i64).to_le_bytes();
+        self.memory[TO_IN_ADDR..TO_IN_ADDR + 8].copy_from_slice(&to_in_bytes);
+
+        // Push address and length
+        self.data_stack.push((INPUT_BUFFER_ADDR + start_pos) as i64);
+        self.data_stack.push(parsed_len as i64);
+
+        Ok(())
+    }
+
+    fn op_compare(&mut self) -> Result<(), ForthError> {
+        // COMPARE ( c-addr1 u1 c-addr2 u2 -- n )
+        // Compare two strings
+        // Return: 0 if equal, -1 if s1 < s2, 1 if s1 > s2
+
+        let u2 = self.data_stack.pop()? as usize;
+        let c_addr2 = self.data_stack.pop()? as usize;
+        let u1 = self.data_stack.pop()? as usize;
+        let c_addr1 = self.data_stack.pop()? as usize;
+
+        // Validate memory addresses
+        if c_addr1 + u1 > self.memory.len() || c_addr2 + u2 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+
+        // Compare up to the length of the shorter string
+        let min_len = u1.min(u2);
+
+        for i in 0..min_len {
+            let byte1 = self.memory[c_addr1 + i];
+            let byte2 = self.memory[c_addr2 + i];
+
+            if byte1 < byte2 {
+                self.data_stack.push(-1);
+                return Ok(());
+            } else if byte1 > byte2 {
+                self.data_stack.push(1);
+                return Ok(());
+            }
+        }
+
+        // Strings are equal up to min_len
+        // Now compare lengths
+        if u1 == u2 {
+            self.data_stack.push(0); // Strings are identical
+        } else if u1 < u2 {
+            self.data_stack.push(-1); // s1 is shorter
+        } else {
+            self.data_stack.push(1); // s1 is longer
+        }
+
+        Ok(())
+    }
+
+    fn op_to_number(&mut self) -> Result<(), ForthError> {
+        // >NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )
+        // Convert string to number, respecting BASE
+        // ud1 is initial double number (we'll treat as single for now)
+        // Returns updated number and remaining unparsed string
+
+        let u1 = self.data_stack.pop()? as usize;
+        let c_addr1 = self.data_stack.pop()? as usize;
+        let ud1 = self.data_stack.pop()? as u64; // Initial value
+
+        // Get current BASE
+        let mut base_bytes = [0u8; 8];
+        base_bytes.copy_from_slice(&self.memory[BASE_ADDR..BASE_ADDR + 8]);
+        let base = i64::from_le_bytes(base_bytes) as u32;
+
+        if base < 2 || base > 36 {
+            return Err(ForthError::InvalidMemoryAddress); // Invalid base
+        }
+
+        // Validate memory address
+        if c_addr1 + u1 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+
+        let mut result = ud1;
+        let mut pos = 0;
+
+        // Process characters
+        while pos < u1 {
+            let ch = self.memory[c_addr1 + pos] as char;
+
+            // Convert character to digit value
+            let digit_value = if ch.is_ascii_digit() {
+                (ch as u32) - ('0' as u32)
+            } else if ch.is_ascii_uppercase() {
+                (ch as u32) - ('A' as u32) + 10
+            } else if ch.is_ascii_lowercase() {
+                (ch as u32) - ('a' as u32) + 10
+            } else {
+                // Not a valid digit, stop processing
+                break;
+            };
+
+            // Check if digit is valid for current base
+            if digit_value >= base {
+                break;
+            }
+
+            // Accumulate: result = result * base + digit
+            result = result.wrapping_mul(base as u64).wrapping_add(digit_value as u64);
+            pos += 1;
+        }
+
+        // Push results: ud2, c-addr2, u2
+        self.data_stack.push(result as i64); // ud2
+        self.data_stack.push((c_addr1 + pos) as i64); // c-addr2 (remaining string)
+        self.data_stack.push((u1 - pos) as i64); // u2 (remaining length)
+
+        Ok(())
+    }
+
+    fn op_s_to_d(&mut self) -> Result<(), ForthError> {
+        // S>D ( n -- d )
+        // Convert single-cell number to double-cell with same value
+        // For negative n, high cell is -1; for non-negative n, high cell is 0
+        let n = self.data_stack.pop()?;
+        let high = if n < 0 { -1 } else { 0 };
+        self.data_stack.push(n);    // low cell
+        self.data_stack.push(high);  // high cell
         Ok(())
     }
 

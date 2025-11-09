@@ -1594,3 +1594,764 @@ fn compile_and_run_with_stdlib(input: &str) -> Result<Executor, String> {
         let word_bytes = &executor.vm().memory[addr + 1..addr + 1 + len];
         assert_eq!(word_bytes, b"HELLO");
     }
+
+    // ============================================================================
+    // COMPARE Tests
+    // ============================================================================
+
+    #[test]
+    fn test_compare_equal_strings() {
+        let mut executor = Executor::new();
+
+        // Write "HELLO" at address 1000
+        let addr1 = 1000;
+        let s1 = b"HELLO";
+        for (i, &byte) in s1.iter().enumerate() {
+            executor.vm_mut().memory[addr1 + i] = byte;
+        }
+
+        // Write "HELLO" at address 2000
+        let addr2 = 2000;
+        for (i, &byte) in s1.iter().enumerate() {
+            executor.vm_mut().memory[addr2 + i] = byte;
+        }
+
+        // COMPARE should return 0
+        let mut lexer = Lexer::new("1000 5 2000 5 COMPARE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let result = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(result, 0, "Equal strings should return 0");
+    }
+
+    #[test]
+    fn test_compare_first_less() {
+        let mut executor = Executor::new();
+
+        // "abcde" < "abdde"
+        let addr1 = 1000;
+        executor.vm_mut().memory[addr1..addr1 + 5].copy_from_slice(b"abcde");
+
+        let addr2 = 2000;
+        executor.vm_mut().memory[addr2..addr2 + 5].copy_from_slice(b"abdde");
+
+        let mut lexer = Lexer::new("1000 5 2000 5 COMPARE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let result = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(result, -1, "\"abcde\" < \"abdde\" should return -1");
+    }
+
+    #[test]
+    fn test_compare_first_greater() {
+        let mut executor = Executor::new();
+
+        // "abcde" > "abbde"
+        let addr1 = 1000;
+        executor.vm_mut().memory[addr1..addr1 + 5].copy_from_slice(b"abcde");
+
+        let addr2 = 2000;
+        executor.vm_mut().memory[addr2..addr2 + 5].copy_from_slice(b"abbde");
+
+        let mut lexer = Lexer::new("1000 5 2000 5 COMPARE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let result = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(result, 1, "\"abcde\" > \"abbde\" should return 1");
+    }
+
+    #[test]
+    fn test_compare_shorter_first() {
+        let mut executor = Executor::new();
+
+        // "abc" vs "abcde" (first is shorter prefix)
+        let addr1 = 1000;
+        executor.vm_mut().memory[addr1..addr1 + 3].copy_from_slice(b"abc");
+
+        let addr2 = 2000;
+        executor.vm_mut().memory[addr2..addr2 + 5].copy_from_slice(b"abcde");
+
+        let mut lexer = Lexer::new("1000 3 2000 5 COMPARE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let result = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(result, -1, "Shorter string should return -1");
+    }
+
+    #[test]
+    fn test_compare_longer_first() {
+        let mut executor = Executor::new();
+
+        // "abcde" vs "abc" (first is longer)
+        let addr1 = 1000;
+        executor.vm_mut().memory[addr1..addr1 + 5].copy_from_slice(b"abcde");
+
+        let addr2 = 2000;
+        executor.vm_mut().memory[addr2..addr2 + 3].copy_from_slice(b"abc");
+
+        let mut lexer = Lexer::new("1000 5 2000 3 COMPARE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let result = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(result, 1, "Longer string should return 1");
+    }
+
+    #[test]
+    fn test_compare_empty_strings() {
+        let mut executor = Executor::new();
+
+        // Compare two empty strings
+        let mut lexer = Lexer::new("1000 0 2000 0 COMPARE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let result = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(result, 0, "Two empty strings should be equal");
+    }
+
+    #[test]
+    fn test_compare_empty_vs_nonempty() {
+        let mut executor = Executor::new();
+
+        // "" vs "abc"
+        let addr2 = 2000;
+        executor.vm_mut().memory[addr2..addr2 + 3].copy_from_slice(b"abc");
+
+        let mut lexer = Lexer::new("1000 0 2000 3 COMPARE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let result = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(result, -1, "Empty string < non-empty should return -1");
+    }
+
+    #[test]
+    fn test_compare_case_sensitive() {
+        let mut executor = Executor::new();
+
+        // "abc" vs "aBc" (case matters: 'b' > 'B')
+        let addr1 = 1000;
+        executor.vm_mut().memory[addr1..addr1 + 3].copy_from_slice(b"abc");
+
+        let addr2 = 2000;
+        executor.vm_mut().memory[addr2..addr2 + 3].copy_from_slice(b"aBc");
+
+        let mut lexer = Lexer::new("1000 3 2000 3 COMPARE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let result = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(result, 1, "'b' (98) > 'B' (66), should return 1");
+    }
+
+    #[test]
+    fn test_to_number_decimal() {
+        let mut executor = Executor::new();
+
+        // Set BASE to 10
+        let base_bytes = 10i64.to_le_bytes();
+        executor.vm_mut().memory[0x100..0x108].copy_from_slice(&base_bytes);
+
+        // Write "123" at address 1000
+        executor.vm_mut().memory[1000] = b'1';
+        executor.vm_mut().memory[1001] = b'2';
+        executor.vm_mut().memory[1002] = b'3';
+
+        // >NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )
+        // Start with 0, address 1000, length 3
+        let input = "0 1000 3 >NUMBER";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let u2 = executor.vm_mut().data_stack.pop().unwrap();
+        let c_addr2 = executor.vm_mut().data_stack.pop().unwrap();
+        let ud2 = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(ud2, 123, "Should parse '123' to 123");
+        assert_eq!(c_addr2, 1003, "Should advance address by 3");
+        assert_eq!(u2, 0, "Should consume all 3 characters");
+    }
+
+    #[test]
+    fn test_to_number_hex_uppercase() {
+        let mut executor = Executor::new();
+
+        // Set BASE to 16
+        let base_bytes = 16i64.to_le_bytes();
+        executor.vm_mut().memory[0x100..0x108].copy_from_slice(&base_bytes);
+
+        // Write "1A2F" at address 1000
+        executor.vm_mut().memory[1000] = b'1';
+        executor.vm_mut().memory[1001] = b'A';
+        executor.vm_mut().memory[1002] = b'2';
+        executor.vm_mut().memory[1003] = b'F';
+
+        // >NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )
+        let input = "0 1000 4 >NUMBER";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let u2 = executor.vm_mut().data_stack.pop().unwrap();
+        let c_addr2 = executor.vm_mut().data_stack.pop().unwrap();
+        let ud2 = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(ud2, 0x1A2F, "Should parse '1A2F' to 6703");
+        assert_eq!(c_addr2, 1004, "Should advance address by 4");
+        assert_eq!(u2, 0, "Should consume all 4 characters");
+    }
+
+    #[test]
+    fn test_to_number_hex_lowercase() {
+        let mut executor = Executor::new();
+
+        // Set BASE to 16
+        let base_bytes = 16i64.to_le_bytes();
+        executor.vm_mut().memory[0x100..0x108].copy_from_slice(&base_bytes);
+
+        // Write "abc" at address 1000
+        executor.vm_mut().memory[1000] = b'a';
+        executor.vm_mut().memory[1001] = b'b';
+        executor.vm_mut().memory[1002] = b'c';
+
+        // >NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )
+        let input = "0 1000 3 >NUMBER";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let u2 = executor.vm_mut().data_stack.pop().unwrap();
+        let c_addr2 = executor.vm_mut().data_stack.pop().unwrap();
+        let ud2 = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(ud2, 0xabc, "Should parse 'abc' to 2748");
+        assert_eq!(c_addr2, 1003, "Should advance address by 3");
+        assert_eq!(u2, 0, "Should consume all 3 characters");
+    }
+
+    #[test]
+    fn test_to_number_binary() {
+        let mut executor = Executor::new();
+
+        // Set BASE to 2
+        let base_bytes = 2i64.to_le_bytes();
+        executor.vm_mut().memory[0x100..0x108].copy_from_slice(&base_bytes);
+
+        // Write "1101" at address 1000
+        executor.vm_mut().memory[1000] = b'1';
+        executor.vm_mut().memory[1001] = b'1';
+        executor.vm_mut().memory[1002] = b'0';
+        executor.vm_mut().memory[1003] = b'1';
+
+        // >NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )
+        let input = "0 1000 4 >NUMBER";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let u2 = executor.vm_mut().data_stack.pop().unwrap();
+        let c_addr2 = executor.vm_mut().data_stack.pop().unwrap();
+        let ud2 = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(ud2, 0b1101, "Should parse '1101' to 13");
+        assert_eq!(c_addr2, 1004, "Should advance address by 4");
+        assert_eq!(u2, 0, "Should consume all 4 characters");
+    }
+
+    #[test]
+    fn test_to_number_partial_parse() {
+        let mut executor = Executor::new();
+
+        // Set BASE to 10
+        let base_bytes = 10i64.to_le_bytes();
+        executor.vm_mut().memory[0x100..0x108].copy_from_slice(&base_bytes);
+
+        // Write "123XYZ" at address 1000
+        executor.vm_mut().memory[1000] = b'1';
+        executor.vm_mut().memory[1001] = b'2';
+        executor.vm_mut().memory[1002] = b'3';
+        executor.vm_mut().memory[1003] = b'X';
+        executor.vm_mut().memory[1004] = b'Y';
+        executor.vm_mut().memory[1005] = b'Z';
+
+        // >NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )
+        let input = "0 1000 6 >NUMBER";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let u2 = executor.vm_mut().data_stack.pop().unwrap();
+        let c_addr2 = executor.vm_mut().data_stack.pop().unwrap();
+        let ud2 = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(ud2, 123, "Should parse '123' and stop at 'X'");
+        assert_eq!(c_addr2, 1003, "Should point to 'X'");
+        assert_eq!(u2, 3, "Should leave 3 characters unparsed");
+    }
+
+    #[test]
+    fn test_to_number_empty_string() {
+        let mut executor = Executor::new();
+
+        // Set BASE to 10
+        let base_bytes = 10i64.to_le_bytes();
+        executor.vm_mut().memory[0x100..0x108].copy_from_slice(&base_bytes);
+
+        // >NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )
+        // Empty string: length 0
+        let input = "42 1000 0 >NUMBER";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let u2 = executor.vm_mut().data_stack.pop().unwrap();
+        let c_addr2 = executor.vm_mut().data_stack.pop().unwrap();
+        let ud2 = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(ud2, 42, "Should keep initial value");
+        assert_eq!(c_addr2, 1000, "Should keep address unchanged");
+        assert_eq!(u2, 0, "Should keep length at 0");
+    }
+
+    #[test]
+    fn test_to_number_with_accumulator() {
+        let mut executor = Executor::new();
+
+        // Set BASE to 10
+        let base_bytes = 10i64.to_le_bytes();
+        executor.vm_mut().memory[0x100..0x108].copy_from_slice(&base_bytes);
+
+        // Write "456" at address 1000
+        executor.vm_mut().memory[1000] = b'4';
+        executor.vm_mut().memory[1001] = b'5';
+        executor.vm_mut().memory[1002] = b'6';
+
+        // >NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )
+        // Start with accumulator value 123
+        let input = "123 1000 3 >NUMBER";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let u2 = executor.vm_mut().data_stack.pop().unwrap();
+        let c_addr2 = executor.vm_mut().data_stack.pop().unwrap();
+        let ud2 = executor.vm_mut().data_stack.pop().unwrap();
+
+        // 123 * 10 + 4 = 1234
+        // 1234 * 10 + 5 = 12345
+        // 12345 * 10 + 6 = 123456
+        assert_eq!(ud2, 123456, "Should accumulate starting from 123");
+        assert_eq!(c_addr2, 1003, "Should advance address by 3");
+        assert_eq!(u2, 0, "Should consume all 3 characters");
+    }
+
+    #[test]
+    fn test_to_number_invalid_digit_for_base() {
+        let mut executor = Executor::new();
+
+        // Set BASE to 8 (octal)
+        let base_bytes = 8i64.to_le_bytes();
+        executor.vm_mut().memory[0x100..0x108].copy_from_slice(&base_bytes);
+
+        // Write "1238" at address 1000 (8 is invalid for octal)
+        executor.vm_mut().memory[1000] = b'1';
+        executor.vm_mut().memory[1001] = b'2';
+        executor.vm_mut().memory[1002] = b'3';
+        executor.vm_mut().memory[1003] = b'8';
+
+        // >NUMBER ( ud1 c-addr1 u1 -- ud2 c-addr2 u2 )
+        let input = "0 1000 4 >NUMBER";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let u2 = executor.vm_mut().data_stack.pop().unwrap();
+        let c_addr2 = executor.vm_mut().data_stack.pop().unwrap();
+        let ud2 = executor.vm_mut().data_stack.pop().unwrap();
+
+        // Should parse "123" in octal = 1*64 + 2*8 + 3 = 83
+        assert_eq!(ud2, 83, "Should parse '123' in octal and stop at '8'");
+        assert_eq!(c_addr2, 1003, "Should point to '8'");
+        assert_eq!(u2, 1, "Should leave 1 character unparsed");
+    }
+
+    // ============================================================================
+    // S>D Tests
+    // ============================================================================
+
+    #[test]
+    fn test_s_to_d_zero() {
+        let mut executor = Executor::new();
+
+        // S>D ( n -- d )
+        // 0 S>D -> 0 0
+        let input = "0 S>D";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let high = executor.vm_mut().data_stack.pop().unwrap();
+        let low = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(low, 0, "Low cell should be 0");
+        assert_eq!(high, 0, "High cell should be 0");
+    }
+
+    #[test]
+    fn test_s_to_d_positive_one() {
+        let mut executor = Executor::new();
+
+        // 1 S>D -> 1 0
+        let input = "1 S>D";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let high = executor.vm_mut().data_stack.pop().unwrap();
+        let low = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(low, 1, "Low cell should be 1");
+        assert_eq!(high, 0, "High cell should be 0");
+    }
+
+    #[test]
+    fn test_s_to_d_positive_two() {
+        let mut executor = Executor::new();
+
+        // 2 S>D -> 2 0
+        let input = "2 S>D";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let high = executor.vm_mut().data_stack.pop().unwrap();
+        let low = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(low, 2, "Low cell should be 2");
+        assert_eq!(high, 0, "High cell should be 0");
+    }
+
+    #[test]
+    fn test_s_to_d_negative_one() {
+        let mut executor = Executor::new();
+
+        // -1 S>D -> -1 -1
+        let input = "-1 S>D";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let high = executor.vm_mut().data_stack.pop().unwrap();
+        let low = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(low, -1, "Low cell should be -1");
+        assert_eq!(high, -1, "High cell should be -1 for sign extension");
+    }
+
+    #[test]
+    fn test_s_to_d_negative_two() {
+        let mut executor = Executor::new();
+
+        // -2 S>D -> -2 -1
+        let input = "-2 S>D";
+        let tokens = Lexer::new(input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let high = executor.vm_mut().data_stack.pop().unwrap();
+        let low = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(low, -2, "Low cell should be -2");
+        assert_eq!(high, -1, "High cell should be -1 for sign extension");
+    }
+
+    #[test]
+    fn test_s_to_d_min_int() {
+        let mut executor = Executor::new();
+
+        // MIN-INT S>D -> MIN-INT -1
+        let min_int = i64::MIN;
+        let input = format!("{} S>D", min_int);
+        let tokens = Lexer::new(&input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let high = executor.vm_mut().data_stack.pop().unwrap();
+        let low = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(low, min_int, "Low cell should be MIN-INT");
+        assert_eq!(high, -1, "High cell should be -1 for sign extension");
+    }
+
+    #[test]
+    fn test_s_to_d_max_int() {
+        let mut executor = Executor::new();
+
+        // MAX-INT S>D -> MAX-INT 0
+        let max_int = i64::MAX;
+        let input = format!("{} S>D", max_int);
+        let tokens = Lexer::new(&input).tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let high = executor.vm_mut().data_stack.pop().unwrap();
+        let low = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(low, max_int, "Low cell should be MAX-INT");
+        assert_eq!(high, 0, "High cell should be 0");
+    }
+
+    // ============================================================================
+    // PARSE Tests
+    // ============================================================================
+
+    #[test]
+    fn test_parse_basic() {
+        // Test basic PARSE with space delimiter
+        let input_text = "HELLO WORLD";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input_text);
+
+        // Call PARSE with space delimiter (32)
+        let mut lexer = Lexer::new("#32 PARSE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // PARSE should return length and address
+        let len = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+
+        assert_eq!(len, 5, "PARSE should return length 5");
+
+        // Check the parsed string
+        let parsed_bytes = &executor.vm().memory[addr..addr + len];
+        let parsed = String::from_utf8_lossy(parsed_bytes);
+        assert_eq!(parsed, "HELLO");
+    }
+
+    #[test]
+    fn test_parse_no_skip_leading() {
+        // PARSE does NOT skip leading delimiters (unlike WORD)
+        let input_text = "  HELLO";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input_text);
+
+        // Call PARSE with space delimiter
+        let mut lexer = Lexer::new("#32 PARSE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        // PARSE should return empty string (stopped at first space)
+        let len = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        assert_eq!(len, 0, "PARSE should return empty string for leading delimiter");
+    }
+
+    #[test]
+    fn test_parse_empty_input() {
+        // PARSE with empty input should return zero length
+        let input_text = "";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input_text);
+
+        let mut lexer = Lexer::new("#32 PARSE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let len = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        assert_eq!(len, 0, "PARSE should return 0 for empty input");
+    }
+
+    #[test]
+    fn test_parse_to_end_of_line() {
+        // PARSE until newline (char 10)
+        let input_text = "Hello World\nNext Line";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input_text);
+
+        // PARSE with newline delimiter (10)
+        let mut lexer = Lexer::new("#10 PARSE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let len = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+
+        assert_eq!(len, 11, "PARSE should parse until newline");
+
+        let parsed_bytes = &executor.vm().memory[addr..addr + len];
+        let parsed = String::from_utf8_lossy(parsed_bytes);
+        assert_eq!(parsed, "Hello World");
+    }
+
+    #[test]
+    fn test_parse_advances_to_in() {
+        // Test that PARSE advances >IN correctly
+        let input_text = "ABC DEF";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input_text);
+
+        // First PARSE
+        let mut lexer = Lexer::new("#32 PARSE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let len1 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let addr1 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+
+        // Check first parse
+        let parsed1 = String::from_utf8_lossy(&executor.vm().memory[addr1..addr1 + len1]);
+        assert_eq!(parsed1, "ABC");
+
+        // Second PARSE
+        let mut lexer2 = Lexer::new("#32 PARSE");
+        let tokens2 = lexer2.tokenize().unwrap();
+        let mut parser2 = Parser::new(tokens2);
+        let program2 = parser2.parse().unwrap();
+        executor.execute_program(program2).unwrap();
+
+        let len2 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let addr2 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+
+        // Check second parse
+        let parsed2 = String::from_utf8_lossy(&executor.vm().memory[addr2..addr2 + len2]);
+        assert_eq!(parsed2, "DEF");
+    }
+
+    #[test]
+    fn test_parse_no_delimiter_found() {
+        // PARSE to end if delimiter not found
+        let input_text = "HELLO";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input_text);
+
+        // Parse with comma delimiter (not present)
+        let mut lexer = Lexer::new("#44 PARSE");  // 44 = comma
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let len = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+
+        assert_eq!(len, 5, "PARSE should parse entire input if delimiter not found");
+
+        let parsed_bytes = &executor.vm().memory[addr..addr + len];
+        let parsed = String::from_utf8_lossy(parsed_bytes);
+        assert_eq!(parsed, "HELLO");
+    }
+
+    #[test]
+    fn test_parse_with_tab_delimiter() {
+        // Test PARSE with tab character (9)
+        let input_text = "FIRST\tSECOND";
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input_text);
+
+        // Parse with tab delimiter
+        let mut lexer = Lexer::new("#9 PARSE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let len = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let addr = executor.vm_mut().data_stack.pop().unwrap() as usize;
+
+        assert_eq!(len, 5, "PARSE should stop at tab");
+
+        let parsed_bytes = &executor.vm().memory[addr..addr + len];
+        let parsed = String::from_utf8_lossy(parsed_bytes);
+        assert_eq!(parsed, "FIRST");
+    }
+
+    #[test]
+    fn test_parse_consecutive_delimiters() {
+        // Test multiple consecutive delimiters
+        let input_text = "A  B";  // Two spaces
+        let mut executor = Executor::new();
+        executor.vm_mut().set_input(input_text);
+
+        // First PARSE
+        let mut lexer = Lexer::new("#32 PARSE");
+        let tokens = lexer.tokenize().unwrap();
+        let mut parser = Parser::new(tokens);
+        let program = parser.parse().unwrap();
+        executor.execute_program(program).unwrap();
+
+        let len1 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let addr1 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+
+        let parsed1 = String::from_utf8_lossy(&executor.vm().memory[addr1..addr1 + len1]);
+        assert_eq!(parsed1, "A");
+
+        // Second PARSE - should get empty string (one space)
+        let mut lexer2 = Lexer::new("#32 PARSE");
+        let tokens2 = lexer2.tokenize().unwrap();
+        let mut parser2 = Parser::new(tokens2);
+        let program2 = parser2.parse().unwrap();
+        executor.execute_program(program2).unwrap();
+
+        let len2 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        assert_eq!(len2, 0, "PARSE should return empty for leading delimiter");
+
+        // Third PARSE - should get "B"
+        let mut lexer3 = Lexer::new("#32 PARSE");
+        let tokens3 = lexer3.tokenize().unwrap();
+        let mut parser3 = Parser::new(tokens3);
+        let program3 = parser3.parse().unwrap();
+        executor.execute_program(program3).unwrap();
+
+        let len3 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+        let addr3 = executor.vm_mut().data_stack.pop().unwrap() as usize;
+
+        let parsed3 = String::from_utf8_lossy(&executor.vm().memory[addr3..addr3 + len3]);
+        assert_eq!(parsed3, "B");
+    }
