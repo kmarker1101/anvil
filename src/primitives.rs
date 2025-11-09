@@ -135,11 +135,11 @@ impl std::error::Error for ForthError {}
 // ============================================================================
 
 /// Macro to define all Forth primitives in a single place
-/// This generates the Primitive enum, name() method, and all() helper
+/// This generates the Primitive enum, name() method, all() helper, and execute dispatcher
 macro_rules! define_primitives {
     (
         $(
-            $variant:ident => $name:literal : $doc:literal
+            $variant:ident => $name:literal : $doc:literal => $method:ident
         ),* $(,)?
     ) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -169,59 +169,70 @@ macro_rules! define_primitives {
                 ]
             }
         }
+
+        // Generate the execute_primitive dispatcher for VM
+        impl VM {
+            pub fn execute_primitive(&mut self, prim: Primitive) -> Result<(), ForthError> {
+                match prim {
+                    $(
+                        Primitive::$variant => self.$method(),
+                    )*
+                }
+            }
+        }
     };
 }
 
 // Define all primitives using the macro
 define_primitives! {
     // Memory operations
-    Fetch => "@": "@ ( addr -- n ) Fetch value from memory",
-    Store => "!": "! ( n addr -- ) Store value to memory",
-    CFetch => "C@": "C@ ( addr -- c ) Fetch byte from memory",
-    CStore => "C!": "C! ( c addr -- ) Store byte to memory",
+    Fetch => "@": "@ ( addr -- n ) Fetch value from memory" => op_fetch,
+    Store => "!": "! ( n addr -- ) Store value to memory" => op_store,
+    CFetch => "C@": "C@ ( addr -- c ) Fetch byte from memory" => op_c_fetch,
+    CStore => "C!": "C! ( c addr -- ) Store byte to memory" => op_c_store,
 
     // Stack manipulation
-    Dup => "DUP": "DUP ( n -- n n ) Duplicate top of stack",
-    Drop => "DROP": "DROP ( n -- ) Remove top of stack",
-    Swap => "SWAP": "SWAP ( a b -- b a ) Swap top two items",
-    Over => "OVER": "OVER ( a b -- a b a ) Copy second item to top",
-    Rot => "ROT": "ROT ( a b c -- b c a ) Rotate top three items",
+    Dup => "DUP": "DUP ( n -- n n ) Duplicate top of stack" => op_dup,
+    Drop => "DROP": "DROP ( n -- ) Remove top of stack" => op_drop,
+    Swap => "SWAP": "SWAP ( a b -- b a ) Swap top two items" => op_swap,
+    Over => "OVER": "OVER ( a b -- a b a ) Copy second item to top" => op_over,
+    Rot => "ROT": "ROT ( a b c -- b c a ) Rotate top three items" => op_rot,
 
     // Return stack
-    ToR => ">R": ">R ( n -- ) (R: -- n) Move to return stack",
-    FromR => "R>": "R> ( -- n ) (R: n -- ) Move from return stack",
-    RFetch => "R@": "R@ ( -- n ) (R: n -- n) Copy from return stack",
+    ToR => ">R": ">R ( n -- ) (R: -- n) Move to return stack" => op_to_r,
+    FromR => "R>": "R> ( -- n ) (R: n -- ) Move from return stack" => op_from_r,
+    RFetch => "R@": "R@ ( -- n ) (R: n -- n) Copy from return stack" => op_r_fetch,
 
     // Arithmetic
-    Add => "+": "+ ( a b -- c ) Addition",
-    Sub => "-": "- ( a b -- c ) Subtraction",
-    Mul => "*": "* ( a b -- c ) Multiplication",
-    Div => "/": "/ ( a b -- c ) Division",
-    Mod => "MOD": "MOD ( a b -- c ) Modulo",
+    Add => "+": "+ ( a b -- c ) Addition" => op_add,
+    Sub => "-": "- ( a b -- c ) Subtraction" => op_sub,
+    Mul => "*": "* ( a b -- c ) Multiplication" => op_mul,
+    Div => "/": "/ ( a b -- c ) Division" => op_div,
+    Mod => "MOD": "MOD ( a b -- c ) Modulo" => op_mod,
 
     // Comparison
-    Equals => "=": "= ( a b -- flag ) Equality test",
-    Less => "<": "< ( a b -- flag ) Less than test",
-    Greater => ">": "> ( a b -- flag ) Greater than test",
+    Equals => "=": "= ( a b -- flag ) Equality test" => op_equals,
+    Less => "<": "< ( a b -- flag ) Less than test" => op_less,
+    Greater => ">": "> ( a b -- flag ) Greater than test" => op_greater,
 
     // Logical
-    And => "AND": "AND ( a b -- c ) Bitwise AND",
-    Or => "OR": "OR ( a b -- c ) Bitwise OR",
-    Xor => "XOR": "XOR ( a b -- c ) Bitwise XOR",
-    Invert => "INVERT": "INVERT ( n -- ~n ) Bitwise NOT",
+    And => "AND": "AND ( a b -- c ) Bitwise AND" => op_and,
+    Or => "OR": "OR ( a b -- c ) Bitwise OR" => op_or,
+    Xor => "XOR": "XOR ( a b -- c ) Bitwise XOR" => op_xor,
+    Invert => "INVERT": "INVERT ( n -- ~n ) Bitwise NOT" => op_invert,
 
     // I/O
-    Emit => "EMIT": "EMIT ( c -- ) Output character",
-    Key => "KEY": "KEY ( -- c ) Input character",
-    Dot => ".": ". ( n -- ) Print number and space",
-    Cr => "CR": "CR ( -- ) Print newline",
-    Type => "TYPE": "TYPE ( addr len -- ) Print string from memory",
+    Emit => "EMIT": "EMIT ( c -- ) Output character" => op_emit,
+    Key => "KEY": "KEY ( -- c ) Input character" => op_key,
+    Dot => ".": ". ( n -- ) Print number and space" => op_dot,
+    Cr => "CR": "CR ( -- ) Print newline" => op_cr,
+    Type => "TYPE": "TYPE ( addr len -- ) Print string from memory" => op_type,
 
     // Loop
-    I => "I": "I ( -- n ) Get current loop index",
+    I => "I": "I ( -- n ) Get current loop index" => op_i,
 
     // Stack inspection
-    Depth => "DEPTH": "DEPTH ( -- n ) Get number of items on data stack",
+    Depth => "DEPTH": "DEPTH ( -- n ) Get number of items on data stack" => op_depth,
 }
 
 // ============================================================================
@@ -271,58 +282,7 @@ impl VM {
         Ok((addr as i64, len as i64))
     }
 
-    pub fn execute_primitive(&mut self, prim: Primitive) -> Result<(), ForthError> {
-        match prim {
-            // Memory operations
-            Primitive::Fetch => self.op_fetch(),
-            Primitive::Store => self.op_store(),
-            Primitive::CFetch => self.op_c_fetch(),
-            Primitive::CStore => self.op_c_store(),
-
-            // Stack manipulation
-            Primitive::Dup => self.op_dup(),
-            Primitive::Drop => self.op_drop(),
-            Primitive::Swap => self.op_swap(),
-            Primitive::Over => self.op_over(),
-            Primitive::Rot => self.op_rot(),
-
-            // Return stack
-            Primitive::ToR => self.op_to_r(),
-            Primitive::FromR => self.op_from_r(),
-            Primitive::RFetch => self.op_r_fetch(),
-
-            // Arithmetic
-            Primitive::Add => self.op_add(),
-            Primitive::Sub => self.op_sub(),
-            Primitive::Mul => self.op_mul(),
-            Primitive::Div => self.op_div(),
-            Primitive::Mod => self.op_mod(),
-
-            // Comparison
-            Primitive::Equals => self.op_equals(),
-            Primitive::Less => self.op_less(),
-            Primitive::Greater => self.op_greater(),
-
-            // Logical
-            Primitive::And => self.op_and(),
-            Primitive::Or => self.op_or(),
-            Primitive::Xor => self.op_xor(),
-            Primitive::Invert => self.op_invert(),
-
-            // I/O
-            Primitive::Emit => self.op_emit(),
-            Primitive::Key => self.op_key(),
-            Primitive::Dot => self.op_dot(),
-            Primitive::Cr => self.op_cr(),
-            Primitive::Type => self.op_type(),
-
-            // Loop counter
-            Primitive::I => self.op_i(),
-
-            // Stack inspection
-            Primitive::Depth => self.op_depth(),
-        }
-    }
+    // execute_primitive is now auto-generated by the define_primitives! macro
 
     // ========================================================================
     // MEMORY OPERATIONS
