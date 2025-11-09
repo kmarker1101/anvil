@@ -10,6 +10,18 @@ use std::io::{self, Read, Write};
 /// Memory address for the BASE variable (stores numeric conversion radix)
 pub const BASE_ADDR: usize = 0x100;
 
+/// Memory address for the >IN variable (current parse position in input buffer)
+pub const TO_IN_ADDR: usize = 0x108;
+
+/// Memory address for the input buffer (SOURCE returns this address)
+pub const INPUT_BUFFER_ADDR: usize = 0x200;
+
+/// Maximum input buffer size
+pub const INPUT_BUFFER_SIZE: usize = 1024;
+
+/// Memory address for WORD's transient buffer (counted string output)
+pub const WORD_BUFFER_ADDR: usize = 0x600;
+
 // ============================================================================
 // STACK IMPLEMENTATIONS
 // ============================================================================
@@ -201,6 +213,9 @@ define_primitives! {
     CharPlus => "CHAR+": "CHAR+ ( c-addr1 -- c-addr2 ) Add character size to address" => op_char_plus,
     Chars => "CHARS": "CHARS ( n1 -- n2 ) Size in address units of n1 characters" => op_chars,
     Base => "BASE": "BASE ( -- a-addr ) Address of cell containing current number-conversion radix" => op_base,
+    ToIn => ">IN": ">IN ( -- a-addr ) Address of cell containing parse position" => op_to_in,
+    Source => "SOURCE": "SOURCE ( -- c-addr u ) Address and length of input buffer" => op_source,
+    Word => "WORD": "WORD ( char -- c-addr ) Parse word delimited by char, return counted string" => op_word,
 
     // Stack manipulation
     Dup => "DUP": "DUP ( n -- n n ) Duplicate top of stack" => op_dup,
@@ -256,6 +271,7 @@ pub struct VM {
     pub memory: Vec<u8>,
     pub loop_stack: Stack, // For DO/LOOP: stores current index and limit
     pub here: usize,       // Dictionary pointer for string allocation
+    pub input_length: usize, // Length of current input in buffer
 }
 
 impl Default for VM {
@@ -272,13 +288,40 @@ impl VM {
             memory: vec![0; 65536], // 64KB memory
             loop_stack: Stack::new(),
             here: 0x4000, // Start string allocation at 16KB
+            input_length: 0,
         };
 
         // Initialize BASE to 10 (decimal)
         let base_bytes = 10i64.to_le_bytes();
         vm.memory[BASE_ADDR..BASE_ADDR + 8].copy_from_slice(&base_bytes);
 
+        // Initialize >IN to 0
+        let to_in_bytes = 0i64.to_le_bytes();
+        vm.memory[TO_IN_ADDR..TO_IN_ADDR + 8].copy_from_slice(&to_in_bytes);
+
         vm
+    }
+
+    /// Set the input buffer for parsing (used by WORD, etc.)
+    pub fn set_input(&mut self, input: &str) {
+        let bytes = input.as_bytes();
+        let len = bytes.len().min(INPUT_BUFFER_SIZE);
+
+        // Copy input to buffer
+        self.memory[INPUT_BUFFER_ADDR..INPUT_BUFFER_ADDR + len]
+            .copy_from_slice(&bytes[..len]);
+
+        // Store input length (for VM)
+        self.input_length = len;
+
+        // Store input length in memory (for LLVM access)
+        let input_len_addr = INPUT_BUFFER_ADDR + INPUT_BUFFER_SIZE;
+        let len_bytes = (len as i64).to_le_bytes();
+        self.memory[input_len_addr..input_len_addr + 8].copy_from_slice(&len_bytes);
+
+        // Reset >IN to 0
+        let to_in_bytes = 0i64.to_le_bytes();
+        self.memory[TO_IN_ADDR..TO_IN_ADDR + 8].copy_from_slice(&to_in_bytes);
     }
 
     /// Allocate a string in memory and return its address
@@ -375,6 +418,67 @@ impl VM {
         // BASE ( -- a-addr )
         // Push the address of the BASE variable onto the stack
         self.data_stack.push(BASE_ADDR as i64);
+        Ok(())
+    }
+
+    fn op_to_in(&mut self) -> Result<(), ForthError> {
+        // >IN ( -- a-addr )
+        // Push the address of the >IN variable onto the stack
+        self.data_stack.push(TO_IN_ADDR as i64);
+        Ok(())
+    }
+
+    fn op_source(&mut self) -> Result<(), ForthError> {
+        // SOURCE ( -- c-addr u )
+        // Return address and length of input buffer
+        self.data_stack.push(INPUT_BUFFER_ADDR as i64);
+        self.data_stack.push(self.input_length as i64);
+        Ok(())
+    }
+
+    fn op_word(&mut self) -> Result<(), ForthError> {
+        // WORD ( char -- c-addr )
+        // Parse word delimited by char, return counted string address
+
+        let delimiter = self.data_stack.pop()? as u8;
+
+        // Get current >IN position
+        let mut to_in_bytes = [0u8; 8];
+        to_in_bytes.copy_from_slice(&self.memory[TO_IN_ADDR..TO_IN_ADDR + 8]);
+        let mut pos = i64::from_le_bytes(to_in_bytes) as usize;
+
+        // Skip leading delimiters
+        while pos < self.input_length && self.memory[INPUT_BUFFER_ADDR + pos] == delimiter {
+            pos += 1;
+        }
+
+        // Collect characters until delimiter or end
+        let start_pos = pos;
+        while pos < self.input_length && self.memory[INPUT_BUFFER_ADDR + pos] != delimiter {
+            pos += 1;
+        }
+
+        let word_len = pos - start_pos;
+
+        // Store as counted string at WORD_BUFFER_ADDR
+        // First byte is length
+        self.memory[WORD_BUFFER_ADDR] = word_len.min(255) as u8;
+
+        // Copy the characters using a temporary buffer to avoid borrow checker issues
+        if word_len > 0 {
+            let mut temp = Vec::with_capacity(word_len);
+            temp.extend_from_slice(&self.memory[INPUT_BUFFER_ADDR + start_pos..INPUT_BUFFER_ADDR + start_pos + word_len]);
+            self.memory[WORD_BUFFER_ADDR + 1..WORD_BUFFER_ADDR + 1 + word_len].copy_from_slice(&temp);
+        }
+
+        // Update >IN
+        let new_to_in = pos as i64;
+        let to_in_bytes = new_to_in.to_le_bytes();
+        self.memory[TO_IN_ADDR..TO_IN_ADDR + 8].copy_from_slice(&to_in_bytes);
+
+        // Push address of counted string
+        self.data_stack.push(WORD_BUFFER_ADDR as i64);
+
         Ok(())
     }
 

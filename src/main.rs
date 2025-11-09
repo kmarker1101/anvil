@@ -185,6 +185,9 @@ fn load_file(executor: &mut Executor, file_path: &str) -> std::result::Result<()
     // Convert to uppercase for case-insensitive word matching
     let processed_upper = processed.to_uppercase();
 
+    // Set input buffer for WORD primitive
+    executor.vm_mut().set_input(&processed_upper);
+
     // Process the file
     let mut lexer = Lexer::new(&processed_upper);
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
@@ -250,6 +253,9 @@ fn preprocess_includes(contents: &str, base_path: &str) -> std::result::Result<S
 fn process_input(executor: &mut Executor, input: &str) -> std::result::Result<(), String> {
     // Convert to uppercase for case-insensitive word matching
     let input = input.to_uppercase();
+
+    // Set input buffer for WORD primitive
+    executor.vm_mut().set_input(&input);
 
     // Tokenize
     let mut lexer = Lexer::new(&input);
