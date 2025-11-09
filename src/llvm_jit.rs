@@ -60,6 +60,7 @@ llvm_primitive_mappings! {
     Here => forth_here,
     CharPlus => forth_char_plus,
     Chars => forth_chars,
+    Base => forth_base,
     Dup => forth_dup,
     Drop => forth_drop,
     Swap => forth_swap,
@@ -1433,6 +1434,20 @@ pub extern "C" fn forth_chars(
         if let Some(n) = stack_pop(data_stack, data_len) {
             stack_push(data_stack, data_len, n);
         }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_base(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // BASE ( -- a-addr )
+        // Push the address of the BASE variable
+        stack_push(data_stack, data_len, crate::primitives::BASE_ADDR as i64);
     }
 }
 

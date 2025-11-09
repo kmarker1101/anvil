@@ -18,6 +18,7 @@ INCLUDE tests/stack.fth
 INCLUDE tests/compare.fth
 INCLUDE examples/math.fth
 INCLUDE tests/memory.fth
+INCLUDE tests/base.fth
 
 \ Add more test files here as they are created:
 \ INCLUDE forth/tests/definitions.fth

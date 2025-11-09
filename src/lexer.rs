@@ -130,6 +130,18 @@ impl Lexer {
             }
             '"' => self.parse_string(),
             '-' | '0'..='9' => self.parse_number(),
+            '$' => {
+                self.advance();
+                self.parse_prefixed_number(16)
+            }
+            '%' => {
+                self.advance();
+                self.parse_prefixed_number(2)
+            }
+            '#' => {
+                self.advance();
+                self.parse_prefixed_number(10)
+            }
             _ => self.parse_word(),
         }
     }
@@ -270,6 +282,50 @@ impl Lexer {
 
         let hex_str: String = self.input[hex_start..self.position].iter().collect();
         let value = i64::from_str_radix(&hex_str, 16).map_err(|_| LexerError::InvalidNumber)?;
+
+        Ok(Token::Number(value))
+    }
+
+    fn parse_prefixed_number(&mut self, radix: u32) -> Result<Token, LexerError> {
+        // Check for negative sign
+        let is_negative = if self.peek() == Some('-') {
+            self.advance();
+            true
+        } else {
+            false
+        };
+
+        let digit_start = self.position;
+
+        // Parse digits valid for the given radix
+        while let Some(ch) = self.peek() {
+            let is_valid_digit = match radix {
+                2 => ch == '0' || ch == '1',
+                10 => ch.is_ascii_digit(),
+                16 => ch.is_ascii_hexdigit(),
+                _ => false,
+            };
+
+            if is_valid_digit {
+                self.advance();
+            } else if ch.is_whitespace() || ch == ':' || ch == ';' || ch == '(' {
+                break;
+            } else {
+                // Invalid character for this radix
+                return Err(LexerError::InvalidNumber);
+            }
+        }
+
+        if self.position == digit_start {
+            return Err(LexerError::InvalidNumber);
+        }
+
+        let num_str: String = self.input[digit_start..self.position].iter().collect();
+        let mut value = i64::from_str_radix(&num_str, radix).map_err(|_| LexerError::InvalidNumber)?;
+
+        if is_negative {
+            value = -value;
+        }
 
         Ok(Token::Number(value))
     }

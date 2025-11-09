@@ -4,6 +4,13 @@
 use std::io::{self, Read, Write};
 
 // ============================================================================
+// CONSTANTS
+// ============================================================================
+
+/// Memory address for the BASE variable (stores numeric conversion radix)
+pub const BASE_ADDR: usize = 0x100;
+
+// ============================================================================
 // STACK IMPLEMENTATIONS
 // ============================================================================
 
@@ -193,6 +200,7 @@ define_primitives! {
     Here => "HERE": "HERE ( -- addr ) Get dictionary pointer" => op_here,
     CharPlus => "CHAR+": "CHAR+ ( c-addr1 -- c-addr2 ) Add character size to address" => op_char_plus,
     Chars => "CHARS": "CHARS ( n1 -- n2 ) Size in address units of n1 characters" => op_chars,
+    Base => "BASE": "BASE ( -- a-addr ) Address of cell containing current number-conversion radix" => op_base,
 
     // Stack manipulation
     Dup => "DUP": "DUP ( n -- n n ) Duplicate top of stack" => op_dup,
@@ -258,13 +266,19 @@ impl Default for VM {
 
 impl VM {
     pub fn new() -> Self {
-        VM {
+        let mut vm = VM {
             data_stack: Stack::new(),
             return_stack: ReturnStack::new(),
             memory: vec![0; 65536], // 64KB memory
             loop_stack: Stack::new(),
             here: 0x4000, // Start string allocation at 16KB
-        }
+        };
+
+        // Initialize BASE to 10 (decimal)
+        let base_bytes = 10i64.to_le_bytes();
+        vm.memory[BASE_ADDR..BASE_ADDR + 8].copy_from_slice(&base_bytes);
+
+        vm
     }
 
     /// Allocate a string in memory and return its address
@@ -354,6 +368,13 @@ impl VM {
         // In this implementation, CHARS is a no-op but we still pop and push for consistency
         let n = self.data_stack.pop()?;
         self.data_stack.push(n);
+        Ok(())
+    }
+
+    fn op_base(&mut self) -> Result<(), ForthError> {
+        // BASE ( -- a-addr )
+        // Push the address of the BASE variable onto the stack
+        self.data_stack.push(BASE_ADDR as i64);
         Ok(())
     }
 

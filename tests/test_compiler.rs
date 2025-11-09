@@ -15,6 +15,19 @@ fn compile_and_run(input: &str) -> Result<Executor, String> {
     Ok(executor)
 }
 
+fn compile_and_run_with_stdlib(input: &str) -> Result<Executor, String> {
+    let mut lexer = Lexer::new(input);
+    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
+
+    let mut parser = Parser::new(tokens);
+    let program = parser.parse().map_err(|e| e.to_string())?;
+
+    let mut executor = Executor::with_stdlib()?;
+    executor.execute_program(program)?;
+
+    Ok(executor)
+}
+
     #[test]
     fn test_compile_simple_word() {
         let mut executor = compile_and_run(": SQUARE DUP * ;").unwrap();
@@ -1111,4 +1124,98 @@ fn compile_and_run(input: &str) -> Result<Executor, String> {
 
         executor.execute_word("ZERO").unwrap();
         assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 0);
+    }
+
+    // ========================================================================
+    // BASE TESTS
+    // ========================================================================
+
+    #[test]
+    fn test_base_address() {
+        let mut executor = compile_and_run("BASE").unwrap();
+
+        executor.execute_word("BASE").unwrap();
+        let addr = executor.vm_mut().data_stack.pop().unwrap();
+        assert_eq!(addr, 256); // BASE_ADDR is 0x100
+    }
+
+    #[test]
+    fn test_base_initialized_to_10() {
+        let mut executor = compile_and_run("BASE @").unwrap();
+
+        executor.execute_word("BASE").unwrap();
+        executor.execute_word("@").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 10);
+    }
+
+    #[test]
+    fn test_decimal_prefix() {
+        let mut executor = compile_and_run(": TEST #42 ; TEST").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 42);
+    }
+
+    #[test]
+    fn test_hex_prefix() {
+        let mut executor = compile_and_run(": TEST $FF ; TEST").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 255);
+    }
+
+    #[test]
+    fn test_binary_prefix() {
+        let mut executor = compile_and_run(": TEST %1010 ; TEST").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 10);
+    }
+
+    #[test]
+    fn test_negative_decimal_prefix() {
+        let mut executor = compile_and_run(": TEST #-42 ; TEST").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), -42);
+    }
+
+    #[test]
+    fn test_negative_hex_prefix() {
+        let mut executor = compile_and_run(": TEST $-FF ; TEST").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), -255);
+    }
+
+    #[test]
+    fn test_negative_binary_prefix() {
+        let mut executor = compile_and_run(": TEST %-101 ; TEST").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), -5);
+    }
+
+    #[test]
+    fn test_hex_word() {
+        let mut executor = compile_and_run_with_stdlib(": TEST DECIMAL BASE @ HEX BASE @ ; TEST").unwrap();
+
+        let hex_base = executor.vm_mut().data_stack.pop().unwrap();
+        let decimal_base = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(decimal_base, 10);
+        assert_eq!(hex_base, 16);
+    }
+
+    #[test]
+    fn test_decimal_word() {
+        let mut executor = compile_and_run_with_stdlib(": TEST HEX BASE @ DECIMAL BASE @ ; TEST").unwrap();
+
+        let decimal_base = executor.vm_mut().data_stack.pop().unwrap();
+        let hex_base = executor.vm_mut().data_stack.pop().unwrap();
+
+        assert_eq!(hex_base, 16);
+        assert_eq!(decimal_base, 10);
+    }
+
+    #[test]
+    fn test_base_can_be_modified() {
+        let mut executor = compile_and_run(": TEST 42 BASE ! BASE @ ; TEST").unwrap();
+
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 42);
+    }
+
+    #[test]
+    fn test_mixed_prefix_arithmetic() {
+        let mut executor = compile_and_run(": TEST #10 $10 + ; TEST").unwrap();
+
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 26); // 10 + 16
     }
