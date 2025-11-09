@@ -120,50 +120,8 @@ impl Compiler {
     }
 
     fn install_primitives(&mut self) {
-        let primitives = vec![
-            // Memory
-            ("@", Primitive::Fetch),
-            ("!", Primitive::Store),
-            ("C@", Primitive::CFetch),
-            ("C!", Primitive::CStore),
-            // Stack
-            ("DUP", Primitive::Dup),
-            ("DROP", Primitive::Drop),
-            ("SWAP", Primitive::Swap),
-            ("OVER", Primitive::Over),
-            ("ROT", Primitive::Rot),
-            // Return stack
-            (">R", Primitive::ToR),
-            ("R>", Primitive::FromR),
-            ("R@", Primitive::RFetch),
-            // Arithmetic
-            ("+", Primitive::Add),
-            ("-", Primitive::Sub),
-            ("*", Primitive::Mul),
-            ("/", Primitive::Div),
-            ("MOD", Primitive::Mod),
-            // Comparison
-            ("=", Primitive::Equals),
-            ("<", Primitive::Less),
-            (">", Primitive::Greater),
-            // Logical
-            ("AND", Primitive::And),
-            ("OR", Primitive::Or),
-            ("XOR", Primitive::Xor),
-            ("INVERT", Primitive::Invert),
-            // I/O
-            ("EMIT", Primitive::Emit),
-            ("KEY", Primitive::Key),
-            (".", Primitive::Dot),
-            ("CR", Primitive::Cr),
-            ("TYPE", Primitive::Type),
-            // Loop counter
-            ("I", Primitive::I),
-            // Stack inspection
-            ("DEPTH", Primitive::Depth),
-        ];
-
-        for (name, prim) in primitives {
+        // Use the centralized primitive list from Primitive::all()
+        for &(name, prim) in Primitive::all() {
             self.dictionary.insert(
                 name.to_string(),
                 CompiledWord {

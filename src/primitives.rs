@@ -134,94 +134,94 @@ impl std::error::Error for ForthError {}
 // PRIMITIVE OPERATIONS
 // ============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Primitive {
-    // Memory operations
-    Fetch,      // @ ( addr -- n )
-    Store,      // ! ( n addr -- )
-    CFetch,     // C@ ( addr -- c )
-    CStore,     // C! ( c addr -- )
+/// Macro to define all Forth primitives in a single place
+/// This generates the Primitive enum, name() method, and all() helper
+macro_rules! define_primitives {
+    (
+        $(
+            $variant:ident => $name:literal : $doc:literal
+        ),* $(,)?
+    ) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+        pub enum Primitive {
+            $(
+                #[doc = $doc]
+                $variant,
+            )*
+        }
 
-    // Stack manipulation
-    Dup,        // DUP ( n -- n n )
-    Drop,       // DROP ( n -- )
-    Swap,       // SWAP ( a b -- b a )
-    Over,       // OVER ( a b -- a b a )
-    Rot,        // ROT ( a b c -- b c a )
+        impl Primitive {
+            /// Get the Forth name of this primitive
+            pub fn name(&self) -> &'static str {
+                match self {
+                    $(
+                        Primitive::$variant => $name,
+                    )*
+                }
+            }
 
-    // Return stack
-    ToR,        // >R ( n -- ) (R: -- n)
-    FromR,      // R> ( -- n ) (R: n -- )
-    RFetch,     // R@ ( -- n ) (R: n -- n)
-
-    // Arithmetic
-    Add,        // + ( a b -- c )
-    Sub,        // - ( a b -- c )
-    Mul,        // * ( a b -- c )
-    Div,        // / ( a b -- c )
-    Mod,        // MOD ( a b -- c )
-
-    // Comparison
-    Equals,     // = ( a b -- flag )
-    Less,       // < ( a b -- flag )
-    Greater,    // > ( a b -- flag )
-
-    // Logical
-    And,        // AND ( a b -- c )
-    Or,         // OR ( a b -- c )
-    Xor,        // XOR ( a b -- c )
-    Invert,     // INVERT ( n -- ~n )
-
-    // I/O
-    Emit,       // EMIT ( c -- )
-    Key,        // KEY ( -- c )
-    Dot,        // . ( n -- ) Print number and space
-    Cr,         // CR ( -- ) Print newline
-    Type,       // TYPE ( addr len -- ) Print string from memory
-
-    // Loop
-    I,          // I ( -- n ) Get current loop index
-
-    // Stack inspection
-    Depth,      // DEPTH ( -- n ) Get number of items on data stack
+            /// Get all primitives as (name, primitive) pairs
+            pub fn all() -> &'static [(&'static str, Primitive)] {
+                &[
+                    $(
+                        ($name, Primitive::$variant),
+                    )*
+                ]
+            }
+        }
+    };
 }
 
-impl Primitive {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Primitive::Fetch => "@",
-            Primitive::Store => "!",
-            Primitive::CFetch => "C@",
-            Primitive::CStore => "C!",
-            Primitive::Dup => "DUP",
-            Primitive::Drop => "DROP",
-            Primitive::Swap => "SWAP",
-            Primitive::Over => "OVER",
-            Primitive::Rot => "ROT",
-            Primitive::ToR => ">R",
-            Primitive::FromR => "R>",
-            Primitive::RFetch => "R@",
-            Primitive::Add => "+",
-            Primitive::Sub => "-",
-            Primitive::Mul => "*",
-            Primitive::Div => "/",
-            Primitive::Mod => "MOD",
-            Primitive::Equals => "=",
-            Primitive::Less => "<",
-            Primitive::Greater => ">",
-            Primitive::And => "AND",
-            Primitive::Or => "OR",
-            Primitive::Xor => "XOR",
-            Primitive::Invert => "INVERT",
-            Primitive::Emit => "EMIT",
-            Primitive::Key => "KEY",
-            Primitive::Dot => ".",
-            Primitive::Cr => "CR",
-            Primitive::Type => "TYPE",
-            Primitive::I => "I",
-            Primitive::Depth => "DEPTH",
-        }
-    }
+// Define all primitives using the macro
+define_primitives! {
+    // Memory operations
+    Fetch => "@": "@ ( addr -- n ) Fetch value from memory",
+    Store => "!": "! ( n addr -- ) Store value to memory",
+    CFetch => "C@": "C@ ( addr -- c ) Fetch byte from memory",
+    CStore => "C!": "C! ( c addr -- ) Store byte to memory",
+
+    // Stack manipulation
+    Dup => "DUP": "DUP ( n -- n n ) Duplicate top of stack",
+    Drop => "DROP": "DROP ( n -- ) Remove top of stack",
+    Swap => "SWAP": "SWAP ( a b -- b a ) Swap top two items",
+    Over => "OVER": "OVER ( a b -- a b a ) Copy second item to top",
+    Rot => "ROT": "ROT ( a b c -- b c a ) Rotate top three items",
+
+    // Return stack
+    ToR => ">R": ">R ( n -- ) (R: -- n) Move to return stack",
+    FromR => "R>": "R> ( -- n ) (R: n -- ) Move from return stack",
+    RFetch => "R@": "R@ ( -- n ) (R: n -- n) Copy from return stack",
+
+    // Arithmetic
+    Add => "+": "+ ( a b -- c ) Addition",
+    Sub => "-": "- ( a b -- c ) Subtraction",
+    Mul => "*": "* ( a b -- c ) Multiplication",
+    Div => "/": "/ ( a b -- c ) Division",
+    Mod => "MOD": "MOD ( a b -- c ) Modulo",
+
+    // Comparison
+    Equals => "=": "= ( a b -- flag ) Equality test",
+    Less => "<": "< ( a b -- flag ) Less than test",
+    Greater => ">": "> ( a b -- flag ) Greater than test",
+
+    // Logical
+    And => "AND": "AND ( a b -- c ) Bitwise AND",
+    Or => "OR": "OR ( a b -- c ) Bitwise OR",
+    Xor => "XOR": "XOR ( a b -- c ) Bitwise XOR",
+    Invert => "INVERT": "INVERT ( n -- ~n ) Bitwise NOT",
+
+    // I/O
+    Emit => "EMIT": "EMIT ( c -- ) Output character",
+    Key => "KEY": "KEY ( -- c ) Input character",
+    Dot => ".": ". ( n -- ) Print number and space",
+    Cr => "CR": "CR ( -- ) Print newline",
+    Type => "TYPE": "TYPE ( addr len -- ) Print string from memory",
+
+    // Loop
+    I => "I": "I ( -- n ) Get current loop index",
+
+    // Stack inspection
+    Depth => "DEPTH": "DEPTH ( -- n ) Get number of items on data stack",
 }
 
 // ============================================================================

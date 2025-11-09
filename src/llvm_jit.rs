@@ -21,38 +21,69 @@ use std::collections::HashMap;
 use crate::compiler::Instruction;
 use crate::primitives::Primitive;
 
-// Ensure all forth_* symbols are included in the binary
-// LLVM MCJIT will resolve these from the current process
-#[inline(never)]
-fn register_forth_symbols() -> usize {
-    let symbols = [
-        forth_dup as usize,
-        forth_drop as usize,
-        forth_swap as usize,
-        forth_over as usize,
-        forth_rot as usize,
-        forth_add as usize,
-        forth_sub as usize,
-        forth_mul as usize,
-        forth_div as usize,
-        forth_mod as usize,
-        forth_equals as usize,
-        forth_less as usize,
-        forth_greater as usize,
-        forth_and as usize,
-        forth_or as usize,
-        forth_xor as usize,
-        forth_invert as usize,
-        forth_to_r as usize,
-        forth_from_r as usize,
-        forth_r_fetch as usize,
-        forth_fetch as usize,
-        forth_store as usize,
-        forth_c_fetch as usize,
-        forth_c_store as usize,
-        forth_emit as usize,
-    ];
-    symbols[0]
+/// Macro to map Primitive enum variants to their extern "C" function names
+/// This generates the symbol registration and primitive declaration mappings
+macro_rules! llvm_primitive_mappings {
+    (
+        $(
+            $variant:ident => $func_name:ident
+        ),* $(,)?
+    ) => {
+        // Generate the register_forth_symbols function
+        #[inline(never)]
+        fn register_forth_symbols() -> usize {
+            let symbols = [
+                $(
+                    $func_name as usize,
+                )*
+            ];
+            symbols[0]
+        }
+
+        // Generate helper to get (name, addr) pair for a primitive
+        fn get_primitive_mapping(primitive: Primitive) -> (&'static str, usize) {
+            match primitive {
+                $(
+                    Primitive::$variant => (stringify!($func_name), $func_name as usize),
+                )*
+            }
+        }
+    };
+}
+
+// Define all LLVM primitive mappings
+llvm_primitive_mappings! {
+    Fetch => forth_fetch,
+    Store => forth_store,
+    CFetch => forth_c_fetch,
+    CStore => forth_c_store,
+    Dup => forth_dup,
+    Drop => forth_drop,
+    Swap => forth_swap,
+    Over => forth_over,
+    Rot => forth_rot,
+    ToR => forth_to_r,
+    FromR => forth_from_r,
+    RFetch => forth_r_fetch,
+    Add => forth_add,
+    Sub => forth_sub,
+    Mul => forth_mul,
+    Div => forth_div,
+    Mod => forth_mod,
+    Equals => forth_equals,
+    Less => forth_less,
+    Greater => forth_greater,
+    And => forth_and,
+    Or => forth_or,
+    Xor => forth_xor,
+    Invert => forth_invert,
+    Emit => forth_emit,
+    Key => forth_key,
+    Dot => forth_dot,
+    Cr => forth_cr,
+    Type => forth_type,
+    I => forth_i,
+    Depth => forth_depth,
 }
 
 /// Compiled function signature:
@@ -168,40 +199,8 @@ impl<'ctx> LLVMCompiler<'ctx> {
             false,
         );
 
-        // Map primitive names to extern C function names and addresses
-        let (func_name, func_addr): (&str, usize) = match primitive {
-            Primitive::Fetch => ("forth_fetch", forth_fetch as usize),
-            Primitive::Store => ("forth_store", forth_store as usize),
-            Primitive::CFetch => ("forth_c_fetch", forth_c_fetch as usize),
-            Primitive::CStore => ("forth_c_store", forth_c_store as usize),
-            Primitive::Dup => ("forth_dup", forth_dup as usize),
-            Primitive::Drop => ("forth_drop", forth_drop as usize),
-            Primitive::Swap => ("forth_swap", forth_swap as usize),
-            Primitive::Over => ("forth_over", forth_over as usize),
-            Primitive::Rot => ("forth_rot", forth_rot as usize),
-            Primitive::ToR => ("forth_to_r", forth_to_r as usize),
-            Primitive::FromR => ("forth_from_r", forth_from_r as usize),
-            Primitive::RFetch => ("forth_r_fetch", forth_r_fetch as usize),
-            Primitive::Add => ("forth_add", forth_add as usize),
-            Primitive::Sub => ("forth_sub", forth_sub as usize),
-            Primitive::Mul => ("forth_mul", forth_mul as usize),
-            Primitive::Div => ("forth_div", forth_div as usize),
-            Primitive::Mod => ("forth_mod", forth_mod as usize),
-            Primitive::Equals => ("forth_equals", forth_equals as usize),
-            Primitive::Less => ("forth_less", forth_less as usize),
-            Primitive::Greater => ("forth_greater", forth_greater as usize),
-            Primitive::And => ("forth_and", forth_and as usize),
-            Primitive::Or => ("forth_or", forth_or as usize),
-            Primitive::Xor => ("forth_xor", forth_xor as usize),
-            Primitive::Invert => ("forth_invert", forth_invert as usize),
-            Primitive::Emit => ("forth_emit", forth_emit as usize),
-            Primitive::Key => ("forth_key", forth_key as usize),
-            Primitive::Dot => ("forth_dot", forth_dot as usize),
-            Primitive::Cr => ("forth_cr", forth_cr as usize),
-            Primitive::Type => ("forth_type", forth_type as usize),
-            Primitive::I => ("forth_i", forth_i as usize),
-            Primitive::Depth => ("forth_depth", forth_depth as usize),
-        };
+        // Use the centralized mapping from the macro
+        let (func_name, func_addr) = get_primitive_mapping(primitive);
 
         let func = self.module.add_function(func_name, fn_type, None);
 
