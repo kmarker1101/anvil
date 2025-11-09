@@ -5,7 +5,7 @@ use std::process::Command;
 fn run_forth_test_suite() {
     // Build the binary first
     let status = Command::new("cargo")
-        .args(["build", "--release", "--bin", "forth"])
+        .args(["build", "--release", "--bin", "anvil"])
         .status()
         .expect("Failed to build forth binary");
 

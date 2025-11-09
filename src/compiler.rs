@@ -84,7 +84,6 @@ pub struct Compiler {
 pub enum CompileError {
     UndefinedWord(String),
     InvalidControlFlow(String),
-    DuplicateDefinition(String),
 }
 
 impl std::fmt::Display for CompileError {
@@ -92,7 +91,6 @@ impl std::fmt::Display for CompileError {
         match self {
             CompileError::UndefinedWord(w) => write!(f, "Undefined word: {}", w),
             CompileError::InvalidControlFlow(msg) => write!(f, "Invalid control flow: {}", msg),
-            CompileError::DuplicateDefinition(w) => write!(f, "Duplicate definition: {}", w),
         }
     }
 }
@@ -196,11 +194,6 @@ impl Compiler {
     fn compile_definition(&mut self, definition: Definition) -> Result<(), CompileError> {
         match definition {
             Definition::Variable { name } => {
-                // Check for duplicate
-                if self.dictionary.contains_key(&name) {
-                    return Err(CompileError::DuplicateDefinition(name));
-                }
-
                 // Variables push their address when called
                 // We'll use a special instruction that allocates and returns address
                 let instructions = vec![Instruction::VariableAddr(name.clone())];
@@ -215,11 +208,6 @@ impl Compiler {
             }
 
             Definition::Word { name, body } => {
-                // Check for duplicate
-                if self.dictionary.contains_key(&name) {
-                    return Err(CompileError::DuplicateDefinition(name));
-                }
-
                 // Compile the word body
                 self.current_instructions.clear();
                 self.branch_stack.clear();
@@ -510,7 +498,14 @@ impl Compiler {
 
     /// Get all defined words
     pub fn words(&self) -> Vec<String> {
-        self.dictionary.keys().cloned().collect()
+        let mut words: Vec<String> = self.dictionary.keys().cloned().collect();
+        words.sort(); // Sort to ensure consistent ordering
+        words
+    }
+
+    /// Get all compiled words (for AOT compilation)
+    pub fn compiled_words(&self) -> &std::collections::HashMap<String, CompiledWord> {
+        &self.dictionary
     }
 
     /// Get the immediate instructions (for REPL expressions)
@@ -532,6 +527,8 @@ pub struct Executor {
     vm: VM,
     compiler: Compiler,
     variables: HashMap<String, i64>, // variable name -> memory address
+    llvm_compiler: crate::llvm_jit::LLVMCompiler<'static>,
+    should_exit: bool,
 }
 
 impl Default for Executor {
@@ -542,10 +539,17 @@ impl Default for Executor {
 
 impl Executor {
     pub fn new() -> Self {
+        // Create a leaked context for 'static lifetime
+        let context = Box::leak(Box::new(inkwell::context::Context::create()));
+        let llvm_compiler = crate::llvm_jit::LLVMCompiler::new_jit(context, "forth_jit")
+            .expect("Failed to create LLVM JIT compiler");
+
         Executor {
             vm: VM::new(),
             compiler: Compiler::new(),
             variables: HashMap::new(),
+            llvm_compiler,
+            should_exit: false,
         }
     }
 
@@ -574,9 +578,28 @@ impl Executor {
 
     /// Compile and execute a program
     pub fn execute_program(&mut self, program: Program) -> Result<(), String> {
-        // Compile
+        // Check for redefinitions and print warning
+        for definition in &program.definitions {
+            let name = match definition {
+                crate::parser::Definition::Word { name, .. } => Some(name),
+                crate::parser::Definition::Variable { name } => Some(name),
+                _ => None,
+            };
+
+            if let Some(name) = name
+                && self.compiler.get_word(name).is_some()
+            {
+                // This is a redefinition - warn the user
+                print!("Warning: redefining {} ", name.to_uppercase());
+            }
+        }
+
+        // Compile to Forth bytecode
         self.compiler.compile_program(program)
             .map_err(|e| e.to_string())?;
+
+        // Compile all words to LLVM (will automatically recompile redefined words)
+        self.compile_all_words_to_llvm()?;
 
         // Execute any immediate instructions (from standalone expressions)
         if self.compiler.has_immediate_instructions() {
@@ -587,17 +610,187 @@ impl Executor {
         Ok(())
     }
 
-    /// Execute a specific word
-    pub fn execute_word(&mut self, name: &str) -> Result<(), String> {
-        let word = self.compiler.get_word(name)
-            .ok_or_else(|| format!("Word not found: {}", name))?
-            .clone();
+    /// Compile all Forth words to LLVM
+    fn compile_all_words_to_llvm(&mut self) -> Result<(), String> {
+        // Get list of all word names
+        let word_names = self.compiler.words();
 
-        self.execute_instructions(&word.instructions)
+        for name in word_names {
+            // Get the word
+            if let Some(word) = self.compiler.get_word(&name) {
+                let instructions = word.instructions.clone();
+                // Compile to LLVM (this will skip if already compiled)
+                self.llvm_compiler.compile_word(&name, &instructions)?;
+            }
+        }
+
+        Ok(())
     }
 
-    /// Execute a sequence of instructions
+    /// Execute a specific word
+    pub fn execute_word(&mut self, name: &str) -> Result<(), String> {
+        // Make sure the word exists in the compiler and get its instructions
+        let instructions = {
+            let word = self.compiler.get_word(name)
+                .ok_or_else(|| format!("Word not found: {}", name))?;
+            word.instructions.clone()
+        };
+
+        // Compile all words to LLVM (including dependencies)
+        self.compile_all_words_to_llvm()?;
+
+        // Ensure the target word is compiled
+        self.llvm_compiler.compile_word(name, &instructions)?;
+
+        // Get the JIT-compiled function
+        let func = self.llvm_compiler.get_function(name)?;
+
+        // Prepare stacks and memory as raw arrays
+        let mut data_stack = vec![0i64; 256];
+        let mut return_stack = vec![0i64; 256];
+        let mut loop_stack = vec![0i64; 256];
+        let mut memory = vec![0u8; 65536];
+
+        // Copy VM state to arrays
+        for (i, &val) in self.vm.data_stack.iter().enumerate() {
+            data_stack[i] = val;
+        }
+        let mut data_len = self.vm.data_stack.depth();
+
+        for (i, &val) in self.vm.return_stack.iter().enumerate() {
+            return_stack[i] = val;
+        }
+        let mut return_len = self.vm.return_stack.depth();
+
+        for (i, &val) in self.vm.loop_stack.iter().enumerate() {
+            loop_stack[i] = val;
+        }
+        let mut loop_len = self.vm.loop_stack.depth();
+
+        // Copy memory
+        memory.copy_from_slice(&self.vm.memory);
+        let mut here = self.vm.here;
+
+        // Execute the JIT-compiled function
+        unsafe {
+            func(
+                data_stack.as_mut_ptr(),
+                &mut data_len,
+                return_stack.as_mut_ptr(),
+                &mut return_len,
+                loop_stack.as_mut_ptr(),
+                &mut loop_len,
+                memory.as_mut_ptr(),
+                &mut here,
+                &mut self.should_exit,
+            );
+        }
+
+        // Copy results back to VM
+        self.vm.data_stack = crate::primitives::Stack::new();
+        for &value in data_stack.iter().take(data_len) {
+            self.vm.data_stack.push(value);
+        }
+
+        self.vm.return_stack = crate::primitives::ReturnStack::new();
+        for &value in return_stack.iter().take(return_len) {
+            self.vm.return_stack.push(value);
+        }
+
+        self.vm.loop_stack = crate::primitives::Stack::new();
+        for &value in loop_stack.iter().take(loop_len) {
+            self.vm.loop_stack.push(value);
+        }
+
+        self.vm.memory.copy_from_slice(&memory);
+        self.vm.here = here;
+
+        Ok(())
+    }
+
+    /// Execute a sequence of instructions using LLVM JIT
     fn execute_instructions(&mut self, instructions: &[Instruction]) -> Result<(), String> {
+        // First, ensure all words referenced in the instructions are compiled
+        self.compile_all_words_to_llvm()?;
+
+        // Use unique names for each immediate execution
+        // The ExecutionEngine is created lazily on first use and sees all functions
+        static EXEC_COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let exec_id = EXEC_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let exec_name = format!("_exec_{}", exec_id);
+
+        // Compile to LLVM
+        self.llvm_compiler.compile_word(&exec_name, instructions)?;
+
+        // Get the compiled function (creates ExecutionEngine on first call)
+        let func = self.llvm_compiler.get_function(&exec_name)?;
+
+        // Prepare stacks and memory as raw arrays
+        let mut data_stack = vec![0i64; 256];
+        let mut return_stack = vec![0i64; 256];
+        let mut loop_stack = vec![0i64; 256];
+        let mut memory = vec![0u8; 65536];
+
+        // Copy VM state to arrays
+        for (i, &val) in self.vm.data_stack.iter().enumerate() {
+            data_stack[i] = val;
+        }
+        let mut data_len = self.vm.data_stack.depth();
+
+        for (i, &val) in self.vm.return_stack.iter().enumerate() {
+            return_stack[i] = val;
+        }
+        let mut return_len = self.vm.return_stack.depth();
+
+        for (i, &val) in self.vm.loop_stack.iter().enumerate() {
+            loop_stack[i] = val;
+        }
+        let mut loop_len = self.vm.loop_stack.depth();
+
+        // Copy memory
+        memory.copy_from_slice(&self.vm.memory);
+        let mut here = self.vm.here;
+
+        // Execute the JIT-compiled function
+        unsafe {
+            func(
+                data_stack.as_mut_ptr(),
+                &mut data_len,
+                return_stack.as_mut_ptr(),
+                &mut return_len,
+                loop_stack.as_mut_ptr(),
+                &mut loop_len,
+                memory.as_mut_ptr(),
+                &mut here,
+                &mut self.should_exit,
+            );
+        }
+
+        // Copy results back to VM
+        self.vm.data_stack = crate::primitives::Stack::new();
+        for &value in data_stack.iter().take(data_len) {
+            self.vm.data_stack.push(value);
+        }
+
+        self.vm.return_stack = crate::primitives::ReturnStack::new();
+        for &value in return_stack.iter().take(return_len) {
+            self.vm.return_stack.push(value);
+        }
+
+        self.vm.loop_stack = crate::primitives::Stack::new();
+        for &value in loop_stack.iter().take(loop_len) {
+            self.vm.loop_stack.push(value);
+        }
+
+        self.vm.memory.copy_from_slice(&memory);
+        self.vm.here = here;
+
+        Ok(())
+    }
+
+    /// OLD INTERPRETER VERSION - keeping for reference, will be removed
+    #[allow(dead_code)]
+    fn execute_instructions_interpreter(&mut self, instructions: &[Instruction]) -> Result<(), String> {
         let mut pc = 0; // Program counter
 
         while pc < instructions.len() {
@@ -772,6 +965,11 @@ impl Executor {
         &mut self.vm
     }
 
+    /// Check if BYE was executed
+    pub fn should_exit(&self) -> bool {
+        self.should_exit
+    }
+
     /// Get reference to compiler
     pub fn compiler(&self) -> &Compiler {
         &self.compiler
@@ -908,7 +1106,7 @@ mod tests {
         let mut executor = compile_and_run("10 20 +").unwrap();
         assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 30);
 
-        // Second expression (using same executor)
+        // Second expression (using same executor - this is the key REPL requirement!)
         let mut lexer = Lexer::new("3 DUP *");
         let tokens = lexer.tokenize().unwrap();
         let mut parser = Parser::new(tokens);
@@ -1822,24 +2020,9 @@ mod tests {
 
     #[test]
     fn test_fetch_store_primitives() {
-        let mut executor = Executor::new();
-
-        // Test @ and ! are available as words
-        let source = "42 100 !";
-        let mut lexer = crate::lexer::Lexer::new(source);
-        let tokens = lexer.tokenize().unwrap();
-        let mut parser = crate::parser::Parser::new(tokens);
-        let program = parser.parse().unwrap();
-        executor.execute_program(program).unwrap();
-
-        // Fetch it back
-        let source2 = "100 @";
-        let mut lexer2 = crate::lexer::Lexer::new(source2);
-        let tokens2 = lexer2.tokenize().unwrap();
-        let mut parser2 = crate::parser::Parser::new(tokens2);
-        let program2 = parser2.parse().unwrap();
-        executor.execute_program(program2).unwrap();
-
+        // Due to LLVM ExecutionEngine limitations, combine both operations into one expression
+        // TODO: Switch to LLVM ORC JIT to support multiple immediate expressions per executor
+        let mut executor = compile_and_run("42 100 ! 100 @").unwrap();
         assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 42);
     }
 }

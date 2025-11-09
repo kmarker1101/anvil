@@ -6,11 +6,18 @@ edition = "2024"
 [lib]
 name = "forth"
 path = "src/lib.rs"
+crate-type = ["rlib", "cdylib"]
 
 [[bin]]
-name = "forth"
+name = "anvil"
 path = "src/main.rs"
+
+[[bin]]
+name = "anvilc"
+path = "src/aot.rs"
 
 [dependencies]
 rustyline = "17.0"
 dirs = "5.0"
+inkwell = { version = "0.6.0", features = ["llvm18-1"] }
+lazy_static = "1.5"

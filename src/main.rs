@@ -27,7 +27,12 @@ fn main() -> Result<()> {
     for file_path in args.iter().skip(1) {
         match load_file(&mut executor, file_path) {
             Ok(()) => println!("Loaded: {}", file_path),
-            Err(e) => eprintln!("Error loading {}: {}", file_path, e),
+            Err(e) => {
+                if e == "EXIT" {
+                    return Ok(());
+                }
+                eprintln!("Error loading {}: {}", file_path, e)
+            },
         }
     }
 
@@ -73,7 +78,6 @@ fn main() -> Result<()> {
                     match cmd.as_str() {
                         ".quit" | ".exit" | ".q" => {
                             println!();
-                            println!("Goodbye!");
                             break;
                         }
                         ".help" | ".h" => {
@@ -115,7 +119,7 @@ fn main() -> Result<()> {
 
                 // Check for BYE word (Forth standard exit)
                 if input.to_uppercase() == "BYE" {
-                    println!(" Goodbye!");
+                    println!();
                     break;
                 }
 
@@ -125,7 +129,13 @@ fn main() -> Result<()> {
                     let file_path = input[8..].trim();
                     match load_file(&mut executor, file_path) {
                         Ok(()) => println!(" ok"),
-                        Err(e) => println!(" Error loading {}: {}", file_path, e),
+                        Err(e) => {
+                            if e == "EXIT" {
+                                println!();
+                                break;
+                            }
+                            println!(" Error loading {}: {}", file_path, e)
+                        },
                     }
                     continue;
                 }
@@ -146,7 +156,7 @@ fn main() -> Result<()> {
                 continue;
             }
             Err(ReadlineError::Eof) => {
-                println!("Goodbye!");
+                println!();
                 break;
             }
             Err(err) => {
@@ -183,6 +193,11 @@ fn load_file(executor: &mut Executor, file_path: &str) -> std::result::Result<()
     let program = parser.parse().map_err(|e| e.to_string())?;
 
     executor.execute_program(program)?;
+
+    // Check if BYE was executed
+    if executor.should_exit() {
+        return Err("EXIT".to_string());
+    }
 
     Ok(())
 }
