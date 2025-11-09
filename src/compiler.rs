@@ -157,6 +157,20 @@ impl Compiler {
                 Ok(())
             }
 
+            Definition::Constant { name, value } => {
+                // Constants are compile-time values stored in the definition
+                // When called, they just push their literal value
+                let instructions = vec![Instruction::Literal(value)];
+
+                let compiled = CompiledWord {
+                    name: name.clone(),
+                    instructions,
+                };
+                self.dictionary.insert(name, compiled);
+
+                Ok(())
+            }
+
             Definition::Word { name, body } => {
                 // Compile the word body
                 self.current_instructions.clear();
@@ -496,6 +510,7 @@ pub struct Executor {
     compiler: Compiler,
     llvm_compiler: crate::llvm_jit::LLVMCompiler<'static>,
     should_exit: bool,
+    constants: std::collections::HashMap<String, i64>,
 }
 
 impl Default for Executor {
@@ -516,6 +531,7 @@ impl Executor {
             compiler: Compiler::new(),
             llvm_compiler,
             should_exit: false,
+            constants: std::collections::HashMap::new(),
         }
     }
 
@@ -536,21 +552,63 @@ impl Executor {
         let mut parser = crate::parser::Parser::new(tokens);
         let program = parser.parse().map_err(|e| e.to_string())?;
 
-        executor
-            .compiler
-            .compile_program(program)
-            .map_err(|e| e.to_string())?;
+        // Use execute_program to properly handle expressions and constants
+        executor.execute_program(program)?;
 
         Ok(executor)
     }
 
     /// Compile and execute a program
     pub fn execute_program(&mut self, program: Program) -> Result<(), String> {
+        // We need to execute expressions BEFORE constant definitions
+        // because constants consume values from the stack
+        let mut modified_program = Program { definitions: Vec::new() };
+        let mut pending_expressions = Vec::new();
+        let mut expressions_for_immediate = Vec::new();
+
+        for definition in program.definitions {
+            match definition {
+                crate::parser::Definition::Expression(expr) => {
+                    // Accumulate expressions - we'll decide what to do with them
+                    // when we see what comes next
+                    pending_expressions.push(expr);
+                }
+                crate::parser::Definition::Constant { name, value: _ } => {
+                    // Execute any pending expressions first (they provide the value)
+                    for expr in pending_expressions.drain(..) {
+                        self.compiler.current_instructions.clear();
+                        self.compiler.compile_expression(expr).map_err(|e| e.to_string())?;
+                        let instructions = self.compiler.current_instructions.clone();
+                        self.execute_instructions(&instructions)?;
+                    }
+
+                    // Pop the value from the stack for the constant
+                    let stack_value = self.vm.data_stack.pop().map_err(|e| format!("CONSTANT {}: {}", name, e))?;
+                    self.constants.insert(name.clone(), stack_value);
+                    // Add the constant with its value to the program
+                    modified_program.definitions.push(crate::parser::Definition::Constant {
+                        name,
+                        value: stack_value
+                    });
+                }
+                other => {
+                    // For other definitions (Word, Variable), save pending expressions
+                    // to be compiled later (after all definitions are available)
+                    expressions_for_immediate.extend(pending_expressions.drain(..));
+                    modified_program.definitions.push(other);
+                }
+            }
+        }
+
+        // Add any remaining pending expressions
+        expressions_for_immediate.extend(pending_expressions);
+
         // Check for redefinitions and print warning
-        for definition in &program.definitions {
+        for definition in &modified_program.definitions {
             let name = match definition {
                 crate::parser::Definition::Word { name, .. } => Some(name),
-                crate::parser::Definition::Variable { name } => Some(name),
+                crate::parser::Definition::Variable { name} => Some(name),
+                crate::parser::Definition::Constant { name, .. } => Some(name),
                 _ => None,
             };
 
@@ -564,8 +622,16 @@ impl Executor {
 
         // Compile to Forth bytecode
         self.compiler
-            .compile_program(program)
+            .compile_program(modified_program)
             .map_err(|e| e.to_string())?;
+
+        // Now compile the expressions that should be executed immediately
+        // (after all word definitions are available)
+        for expr in expressions_for_immediate {
+            self.compiler.current_instructions.clear();
+            self.compiler.compile_expression(expr).map_err(|e| e.to_string())?;
+            self.compiler.immediate_instructions.append(&mut self.compiler.current_instructions);
+        }
 
         // Compile all words to LLVM (will automatically recompile redefined words)
         self.compile_all_words_to_llvm()?;

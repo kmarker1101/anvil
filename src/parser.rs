@@ -19,6 +19,9 @@ pub enum Definition {
     /// VARIABLE name
     Variable { name: String },
 
+    /// CONSTANT name
+    Constant { name: String, value: i64 },
+
     /// Just a top-level expression (for REPL mode)
     Expression(Expression),
 }
@@ -145,6 +148,8 @@ impl Parser {
             self.parse_word_definition()
         } else if self.check(&Token::Variable) {
             self.parse_variable_definition()
+        } else if self.check(&Token::Constant) {
+            self.parse_constant_definition()
         } else {
             // Top-level expression (for REPL)
             let expr = self.parse_expression()?;
@@ -173,6 +178,31 @@ impl Parser {
         };
 
         Ok(Definition::Variable { name })
+    }
+
+    /// Parse constant definition: n CONSTANT NAME
+    fn parse_constant_definition(&mut self) -> Result<Definition, ParseError> {
+        self.advance(); // consume CONSTANT
+
+        // Get constant name
+        let name = match self.peek() {
+            Some(Token::Word(w)) => {
+                let n = w.clone();
+                self.advance();
+                n
+            }
+            Some(token) => {
+                return Err(ParseError::UnexpectedToken {
+                    expected: "constant name".to_string(),
+                    found: token.clone(),
+                })
+            }
+            None => return Err(ParseError::UnexpectedEof),
+        };
+
+        // Note: In Forth, CONSTANT expects the value on the stack at runtime
+        // We'll handle this in the compiler by popping the value
+        Ok(Definition::Constant { name, value: 0 })
     }
 
     /// Parse word definition: : NAME body ;

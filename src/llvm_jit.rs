@@ -57,6 +57,9 @@ llvm_primitive_mappings! {
     Store => forth_store,
     CFetch => forth_c_fetch,
     CStore => forth_c_store,
+    Here => forth_here,
+    CharPlus => forth_char_plus,
+    Chars => forth_chars,
     Dup => forth_dup,
     Drop => forth_drop,
     Swap => forth_swap,
@@ -1387,6 +1390,48 @@ pub extern "C" fn forth_c_store(
             if addr < 65536 {
                 *memory.add(addr) = value as u8;
             }
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_here(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, here: *mut usize,
+) {
+    unsafe {
+        stack_push(data_stack, data_len, *here as i64);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_char_plus(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        if let Some(addr) = stack_pop(data_stack, data_len) {
+            stack_push(data_stack, data_len, addr.wrapping_add(1));
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_chars(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // CHARS is a no-op in this implementation (1 char = 1 address unit)
+        // But we still pop and push for consistency
+        if let Some(n) = stack_pop(data_stack, data_len) {
+            stack_push(data_stack, data_len, n);
         }
     }
 }

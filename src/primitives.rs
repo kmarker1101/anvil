@@ -190,6 +190,9 @@ define_primitives! {
     Store => "!": "! ( n addr -- ) Store value to memory" => op_store,
     CFetch => "C@": "C@ ( addr -- c ) Fetch byte from memory" => op_c_fetch,
     CStore => "C!": "C! ( c addr -- ) Store byte to memory" => op_c_store,
+    Here => "HERE": "HERE ( -- addr ) Get dictionary pointer" => op_here,
+    CharPlus => "CHAR+": "CHAR+ ( c-addr1 -- c-addr2 ) Add character size to address" => op_char_plus,
+    Chars => "CHARS": "CHARS ( n1 -- n2 ) Size in address units of n1 characters" => op_chars,
 
     // Stack manipulation
     Dup => "DUP": "DUP ( n -- n n ) Duplicate top of stack" => op_dup,
@@ -329,6 +332,28 @@ impl VM {
             return Err(ForthError::InvalidMemoryAddress);
         }
         self.memory[addr] = value;
+        Ok(())
+    }
+
+    fn op_here(&mut self) -> Result<(), ForthError> {
+        // HERE ( -- addr )
+        self.data_stack.push(self.here as i64);
+        Ok(())
+    }
+
+    fn op_char_plus(&mut self) -> Result<(), ForthError> {
+        // CHAR+ ( c-addr1 -- c-addr2 )
+        let addr = self.data_stack.pop()?;
+        self.data_stack.push(addr.wrapping_add(1));
+        Ok(())
+    }
+
+    fn op_chars(&mut self) -> Result<(), ForthError> {
+        // CHARS ( n1 -- n2 )
+        // Since characters are 1 byte, n2 = n1 * 1 = n1
+        // In this implementation, CHARS is a no-op but we still pop and push for consistency
+        let n = self.data_stack.pop()?;
+        self.data_stack.push(n);
         Ok(())
     }
 

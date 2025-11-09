@@ -230,6 +230,7 @@ fn build_minimal_program(user_program: Program, stdlib_program: Program) -> Prog
         let name = match &def {
             Definition::Word { name, .. } => Some(name.clone()),
             Definition::Variable { name } => Some(name.clone()),
+            Definition::Constant { name, .. } => Some(name.clone()),
             Definition::Expression(_) => None,
         };
         if let Some(n) = name {
@@ -243,6 +244,7 @@ fn build_minimal_program(user_program: Program, stdlib_program: Program) -> Prog
         let name = match def {
             Definition::Word { name, .. } => Some(name.clone()),
             Definition::Variable { name } => Some(name.clone()),
+            Definition::Constant { name, .. } => Some(name.clone()),
             Definition::Expression(_) => None,
         };
         if let Some(n) = name {
@@ -312,6 +314,7 @@ fn collect_word_references_from_def(def: &Definition, words: &mut HashSet<String
             collect_word_references_from_expr(expr, words);
         }
         Definition::Variable { .. } => {}
+        Definition::Constant { .. } => {}
     }
 }
 

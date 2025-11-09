@@ -12,6 +12,7 @@ pub enum Token {
     Colon,     // :
     Semicolon, // ;
     Variable,  // VARIABLE
+    Constant,  // CONSTANT
 
     // Control flow
     If,       // IF
@@ -46,6 +47,7 @@ impl fmt::Display for Token {
             Token::Colon => write!(f, ":"),
             Token::Semicolon => write!(f, ";"),
             Token::Variable => write!(f, "VARIABLE"),
+            Token::Constant => write!(f, "CONSTANT"),
             Token::If => write!(f, "IF"),
             Token::Then => write!(f, "THEN"),
             Token::Else => write!(f, "ELSE"),
@@ -179,6 +181,7 @@ impl Lexer {
         let upper_word = word.to_uppercase();
         let token = match upper_word.as_str() {
             "VARIABLE" => Token::Variable,
+            "CONSTANT" => Token::Constant,
             "IF" => Token::If,
             "THEN" => Token::Then,
             "ELSE" => Token::Else,

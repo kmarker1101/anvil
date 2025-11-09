@@ -1065,3 +1065,50 @@ fn compile_and_run(input: &str) -> Result<Executor, String> {
         let mut executor = compile_and_run("42 100 ! 100 @").unwrap();
         assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 42);
     }
+
+    #[test]
+    fn test_constant_basic() {
+        let mut executor = compile_and_run("42 CONSTANT THE-ANSWER").unwrap();
+
+        // Now call THE-ANSWER - it should push 42
+        executor.execute_word("THE-ANSWER").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 42);
+    }
+
+    #[test]
+    fn test_constant_in_word() {
+        let mut executor = compile_and_run("100 CONSTANT VALUE : TEST VALUE DUP + ;").unwrap();
+
+        // Call TEST - should push VALUE twice and add them
+        executor.execute_word("TEST").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 200);
+    }
+
+    #[test]
+    fn test_constant_multiple() {
+        let mut executor = compile_and_run("10 CONSTANT TEN 20 CONSTANT TWENTY 30 CONSTANT THIRTY").unwrap();
+
+        executor.execute_word("TEN").unwrap();
+        executor.execute_word("TWENTY").unwrap();
+        executor.execute_word("THIRTY").unwrap();
+
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 30);
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 20);
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 10);
+    }
+
+    #[test]
+    fn test_constant_negative() {
+        let mut executor = compile_and_run("-42 CONSTANT NEG").unwrap();
+
+        executor.execute_word("NEG").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), -42);
+    }
+
+    #[test]
+    fn test_constant_zero() {
+        let mut executor = compile_and_run("0 CONSTANT ZERO").unwrap();
+
+        executor.execute_word("ZERO").unwrap();
+        assert_eq!(executor.vm_mut().data_stack.pop().unwrap(), 0);
+    }

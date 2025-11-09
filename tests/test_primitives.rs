@@ -460,3 +460,171 @@ fn test_depth_incremental() {
     vm.execute_primitive(Primitive::Depth).unwrap();
     assert_eq!(vm.data_stack.pop().unwrap(), 3);
 }
+
+#[test]
+fn test_char_plus_basic() {
+    let mut vm = VM::new();
+    vm.data_stack.push(1000);
+    vm.execute_primitive(Primitive::CharPlus).unwrap();
+    assert_eq!(vm.data_stack.pop().unwrap(), 1001);
+}
+
+#[test]
+fn test_char_plus_zero() {
+    let mut vm = VM::new();
+    vm.data_stack.push(0);
+    vm.execute_primitive(Primitive::CharPlus).unwrap();
+    assert_eq!(vm.data_stack.pop().unwrap(), 1);
+}
+
+#[test]
+fn test_char_plus_multiple() {
+    let mut vm = VM::new();
+    vm.data_stack.push(100);
+    vm.execute_primitive(Primitive::CharPlus).unwrap();
+    vm.execute_primitive(Primitive::CharPlus).unwrap();
+    vm.execute_primitive(Primitive::CharPlus).unwrap();
+    assert_eq!(vm.data_stack.pop().unwrap(), 103);
+}
+
+#[test]
+fn test_char_plus_negative() {
+    let mut vm = VM::new();
+    vm.data_stack.push(-5);
+    vm.execute_primitive(Primitive::CharPlus).unwrap();
+    assert_eq!(vm.data_stack.pop().unwrap(), -4);
+}
+
+#[test]
+fn test_char_plus_underflow() {
+    let mut vm = VM::new();
+    let result = vm.execute_primitive(Primitive::CharPlus);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_c_store_basic() {
+    let mut vm = VM::new();
+    vm.data_stack.push(42);
+    vm.data_stack.push(100);
+    vm.execute_primitive(Primitive::CStore).unwrap();
+    assert_eq!(vm.memory[100], 42);
+}
+
+#[test]
+fn test_c_store_truncation() {
+    let mut vm = VM::new();
+    // Store 0x1234 - should only store 0x34 (low byte)
+    vm.data_stack.push(0x1234);
+    vm.data_stack.push(200);
+    vm.execute_primitive(Primitive::CStore).unwrap();
+    assert_eq!(vm.memory[200], 0x34);
+}
+
+#[test]
+fn test_c_store_negative() {
+    let mut vm = VM::new();
+    // -1 as i64 is 0xFFFFFFFFFFFFFFFF, should store 0xFF
+    vm.data_stack.push(-1);
+    vm.data_stack.push(300);
+    vm.execute_primitive(Primitive::CStore).unwrap();
+    assert_eq!(vm.memory[300], 0xFF);
+}
+
+#[test]
+fn test_c_store_zero() {
+    let mut vm = VM::new();
+    // First set a non-zero value
+    vm.memory[400] = 99;
+    // Now store zero
+    vm.data_stack.push(0);
+    vm.data_stack.push(400);
+    vm.execute_primitive(Primitive::CStore).unwrap();
+    assert_eq!(vm.memory[400], 0);
+}
+
+#[test]
+fn test_c_store_multiple_locations() {
+    let mut vm = VM::new();
+    // Store different values at different addresses
+    vm.data_stack.push(65); // 'A'
+    vm.data_stack.push(500);
+    vm.execute_primitive(Primitive::CStore).unwrap();
+
+    vm.data_stack.push(66); // 'B'
+    vm.data_stack.push(501);
+    vm.execute_primitive(Primitive::CStore).unwrap();
+
+    vm.data_stack.push(67); // 'C'
+    vm.data_stack.push(502);
+    vm.execute_primitive(Primitive::CStore).unwrap();
+
+    assert_eq!(vm.memory[500], 65);
+    assert_eq!(vm.memory[501], 66);
+    assert_eq!(vm.memory[502], 67);
+}
+
+#[test]
+fn test_c_store_invalid_address() {
+    let mut vm = VM::new();
+    vm.data_stack.push(42);
+    vm.data_stack.push(999999); // Out of bounds
+    let result = vm.execute_primitive(Primitive::CStore);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_c_store_underflow() {
+    let mut vm = VM::new();
+    vm.data_stack.push(100); // Only one value
+    let result = vm.execute_primitive(Primitive::CStore);
+    assert!(result.is_err());
+}
+
+#[test]
+fn test_chars_identity() {
+    let mut vm = VM::new();
+    // CHARS should return same value (1 char = 1 address unit)
+    vm.data_stack.push(5);
+    vm.execute_primitive(Primitive::Chars).unwrap();
+    assert_eq!(vm.data_stack.pop().unwrap(), 5);
+}
+
+#[test]
+fn test_chars_zero() {
+    let mut vm = VM::new();
+    vm.data_stack.push(0);
+    vm.execute_primitive(Primitive::Chars).unwrap();
+    assert_eq!(vm.data_stack.pop().unwrap(), 0);
+}
+
+#[test]
+fn test_chars_one() {
+    let mut vm = VM::new();
+    vm.data_stack.push(1);
+    vm.execute_primitive(Primitive::Chars).unwrap();
+    assert_eq!(vm.data_stack.pop().unwrap(), 1);
+}
+
+#[test]
+fn test_chars_large() {
+    let mut vm = VM::new();
+    vm.data_stack.push(1000);
+    vm.execute_primitive(Primitive::Chars).unwrap();
+    assert_eq!(vm.data_stack.pop().unwrap(), 1000);
+}
+
+#[test]
+fn test_chars_negative() {
+    let mut vm = VM::new();
+    vm.data_stack.push(-10);
+    vm.execute_primitive(Primitive::Chars).unwrap();
+    assert_eq!(vm.data_stack.pop().unwrap(), -10);
+}
+
+#[test]
+fn test_chars_underflow() {
+    let mut vm = VM::new();
+    let result = vm.execute_primitive(Primitive::Chars);
+    assert!(result.is_err());
+}
