@@ -1915,8 +1915,10 @@ pub extern "C" fn forth_variable_addr(
     offset: i64,
 ) {
     unsafe {
-        // Variables start at offset 20000 in memory
-        let var_addr = 20000 + offset;
+        // Variables start at offset 30000 in memory
+        // This provides 14KB (30000 - 16384) for string allocation at HERE
+        // before colliding with variable storage
+        let var_addr = 30000 + offset;
         stack_push(data_stack, data_len, var_addr);
     }
 }
