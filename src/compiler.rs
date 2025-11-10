@@ -2,7 +2,7 @@
 
 use crate::parser::{Definition, Expression, Program};
 use crate::primitives::{Primitive, VM};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 // ============================================================================
 // COMPILED CODE - Internal representation
@@ -78,6 +78,15 @@ pub struct Compiler {
 
     /// Name of word currently being compiled (for RECURSE)
     current_word_name: Option<String>,
+
+    /// Set of immediate words (words that execute during compilation)
+    immediate_words: HashSet<String>,
+
+    /// Last defined word name (for IMMEDIATE)
+    last_defined_word: Option<String>,
+
+    /// Compilation state: false = interpreting, true = compiling
+    compilation_state: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -111,12 +120,42 @@ impl Compiler {
             branch_stack: Vec::new(),
             immediate_instructions: Vec::new(),
             current_word_name: None,
+            immediate_words: HashSet::new(),
+            last_defined_word: None,
+            compilation_state: false,
         };
 
         // Install primitive words in dictionary
         compiler.install_primitives();
 
         compiler
+    }
+
+    /// Mark the last defined word as immediate
+    pub fn mark_immediate(&mut self) {
+        if let Some(word) = &self.last_defined_word {
+            self.immediate_words.insert(word.clone());
+        }
+    }
+
+    /// Check if a word is immediate
+    pub fn is_immediate(&self, word: &str) -> bool {
+        self.immediate_words.contains(word)
+    }
+
+    /// Get the count of immediate words (for debugging)
+    pub fn immediate_words_count(&self) -> usize {
+        self.immediate_words.len()
+    }
+
+    /// Get current compilation state (0 = interpreting, -1 = compiling)
+    pub fn get_state(&self) -> i64 {
+        if self.compilation_state { -1 } else { 0 }
+    }
+
+    /// Get last defined word name
+    pub fn get_last_defined_word(&self) -> Option<&str> {
+        self.last_defined_word.as_deref()
     }
 
     fn install_primitives(&mut self) {
@@ -152,7 +191,10 @@ impl Compiler {
                     name: name.clone(),
                     instructions,
                 };
-                self.dictionary.insert(name, compiled);
+                self.dictionary.insert(name.clone(), compiled);
+
+                // Track last defined word for IMMEDIATE
+                self.last_defined_word = Some(name);
 
                 Ok(())
             }
@@ -166,7 +208,10 @@ impl Compiler {
                     name: name.clone(),
                     instructions,
                 };
-                self.dictionary.insert(name, compiled);
+                self.dictionary.insert(name.clone(), compiled);
+
+                // Track last defined word for IMMEDIATE
+                self.last_defined_word = Some(name);
 
                 Ok(())
             }
@@ -189,7 +234,10 @@ impl Compiler {
                     name: name.clone(),
                     instructions: self.current_instructions.clone(),
                 };
-                self.dictionary.insert(name, compiled);
+                self.dictionary.insert(name.clone(), compiled);
+
+                // Track last defined word for IMMEDIATE
+                self.last_defined_word = Some(name);
 
                 // Clear current word name
                 self.current_word_name = None;
@@ -526,13 +574,33 @@ impl Executor {
         let llvm_compiler = crate::llvm_jit::LLVMCompiler::new_jit(context, "forth_jit")
             .expect("Failed to create LLVM JIT compiler");
 
-        Executor {
+        let executor = Executor {
             vm: VM::new(),
             compiler: Compiler::new(),
             llvm_compiler,
             should_exit: false,
             constants: std::collections::HashMap::new(),
-        }
+        };
+
+        // Note: We don't set the compiler pointer here because the Executor
+        // will be moved. The pointer must be set after the Executor is in
+        // its final location. Call update_compiler_pointers() after creation.
+
+        executor
+    }
+
+    /// Update the compiler pointers after the Executor has been moved to its final location.
+    /// This must be called after Executor::new() or Executor::with_stdlib().
+    pub fn update_compiler_pointers(&mut self) {
+        // Connect VM to Compiler for meta-compiler support
+        // SAFETY: We're storing a pointer to the compiler in the VM
+        // This is safe as long as the compiler outlives the VM,
+        // which is guaranteed by the Executor struct ownership
+        let compiler_ptr = &mut self.compiler as *mut Compiler as *mut std::ffi::c_void;
+        self.vm.set_compiler(compiler_ptr);
+
+        // Also set global compiler pointer for LLVM functions
+        crate::llvm_jit::set_global_compiler(compiler_ptr);
     }
 
     /// Create a new executor with the standard library loaded
@@ -560,18 +628,38 @@ impl Executor {
 
     /// Compile and execute a program
     pub fn execute_program(&mut self, program: Program) -> Result<(), String> {
+        // Ensure compiler pointers are up-to-date in case Executor was moved
+        self.update_compiler_pointers();
+
         // We need to execute expressions BEFORE constant definitions
         // because constants consume values from the stack
         let mut modified_program = Program { definitions: Vec::new() };
         let mut pending_expressions = Vec::new();
         let mut expressions_for_immediate = Vec::new();
 
+        let mut just_compiled_word_or_var = false;
+
         for definition in program.definitions {
             match definition {
                 crate::parser::Definition::Expression(expr) => {
+                    // Check if this is IMMEDIATE right after a word/variable definition
+                    if just_compiled_word_or_var {
+                        if let crate::parser::Expression::WordCall(word_name) = &expr {
+                            if word_name == "IMMEDIATE" {
+                                // Call mark_immediate directly instead of going through VM primitive
+                                // This avoids the issue of having two mutable references to compiler
+                                self.compiler.mark_immediate();
+
+                                just_compiled_word_or_var = false;
+                                continue; // Skip adding to pending
+                            }
+                        }
+                    }
+
                     // Accumulate expressions - we'll decide what to do with them
                     // when we see what comes next
                     pending_expressions.push(expr);
+                    just_compiled_word_or_var = false;
                 }
                 crate::parser::Definition::Constant { name, value: _ } => {
                     // Execute any pending expressions first (they provide the value)
@@ -590,11 +678,27 @@ impl Executor {
                         name,
                         value: stack_value
                     });
+                    just_compiled_word_or_var = false;
                 }
                 other => {
                     // For other definitions (Word, Variable), save pending expressions
                     // to be compiled later (after all definitions are available)
                     expressions_for_immediate.extend(pending_expressions.drain(..));
+
+                    // Track last_defined_word for IMMEDIATE support
+                    // Don't compile immediately - that would fail if the word references
+                    // not-yet-defined constants
+                    match &other {
+                        crate::parser::Definition::Word { name, .. } |
+                        crate::parser::Definition::Variable { name } => {
+                            self.compiler.last_defined_word = Some(name.clone());
+                            just_compiled_word_or_var = true;
+                        }
+                        _ => {
+                            just_compiled_word_or_var = false;
+                        }
+                    }
+
                     modified_program.definitions.push(other);
                 }
             }

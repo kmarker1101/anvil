@@ -133,6 +133,10 @@ pub enum ForthError {
     DivisionByZero,
     InvalidMemoryAddress,
     IoError(String),
+    NoCompilerAvailable,
+    InvalidUtf8,
+    WordNotFound,
+    ExecuteNotImplemented,
 }
 
 impl std::fmt::Display for ForthError {
@@ -143,6 +147,10 @@ impl std::fmt::Display for ForthError {
             ForthError::DivisionByZero => write!(f, "Division by zero"),
             ForthError::InvalidMemoryAddress => write!(f, "Invalid memory address"),
             ForthError::IoError(msg) => write!(f, "I/O error: {}", msg),
+            ForthError::NoCompilerAvailable => write!(f, "No compiler available for meta-compiler operations"),
+            ForthError::InvalidUtf8 => write!(f, "Invalid UTF-8 string"),
+            ForthError::WordNotFound => write!(f, "Word not found"),
+            ForthError::ExecuteNotImplemented => write!(f, "EXECUTE not yet fully implemented"),
         }
     }
 }
@@ -263,6 +271,16 @@ define_primitives! {
 
     // Stack inspection
     Depth => "DEPTH": "DEPTH ( -- n ) Get number of items on data stack" => op_depth,
+
+    // Compilation control (Note: These need special handling in the compiler)
+    Immediate => "IMMEDIATE": "IMMEDIATE ( -- ) Mark most recent definition as immediate" => op_immediate,
+    State => "STATE": "STATE ( -- addr ) Address of compilation state variable" => op_state,
+
+    // Meta-compiler support - these interact with the Compiler
+    // Note: These are placeholders in the VM, actual implementation requires Compiler access
+    FindWord => "FIND-WORD": "FIND-WORD ( addr len -- xt flag ) Find word in dictionary" => op_find_word,
+    Execute => "EXECUTE": "EXECUTE ( xt -- ) Execute an execution token" => op_execute,
+    IsImmediate => "IMMEDIATE?": "IMMEDIATE? ( addr len -- flag ) Check if word is immediate" => op_is_immediate,
 }
 
 // ============================================================================
@@ -276,6 +294,7 @@ pub struct VM {
     pub loop_stack: Stack, // For DO/LOOP: stores current index and limit
     pub here: usize,       // Dictionary pointer for string allocation
     pub input_length: usize, // Length of current input in buffer
+    pub compiler: Option<*mut std::ffi::c_void>, // Pointer to Compiler for meta-compiler support
 }
 
 impl Default for VM {
@@ -293,6 +312,7 @@ impl VM {
             loop_stack: Stack::new(),
             here: 0x4000, // Start string allocation at 16KB
             input_length: 0,
+            compiler: None, // No compiler by default
         };
 
         // Initialize BASE to 10 (decimal)
@@ -304,6 +324,16 @@ impl VM {
         vm.memory[TO_IN_ADDR..TO_IN_ADDR + 8].copy_from_slice(&to_in_bytes);
 
         vm
+    }
+
+    /// Set the compiler pointer for meta-compiler support
+    pub fn set_compiler(&mut self, compiler: *mut std::ffi::c_void) {
+        self.compiler = Some(compiler);
+    }
+
+    /// Clear the compiler pointer
+    pub fn clear_compiler(&mut self) {
+        self.compiler = None;
     }
 
     /// Set the input buffer for parsing (used by WORD, etc.)
@@ -916,6 +946,103 @@ impl VM {
         // Push the number of items on the data stack
         let depth = self.data_stack.depth() as i64;
         self.data_stack.push(depth);
+        Ok(())
+    }
+
+    fn op_immediate(&mut self) -> Result<(), ForthError> {
+        // IMMEDIATE ( -- )
+        // Mark the most recently defined word as immediate
+        if let Some(compiler_ptr) = self.compiler {
+            unsafe {
+                // Cast the void pointer back to Compiler
+                // SAFETY: The pointer is valid as long as the Executor exists
+                // and points to the compiler field
+                let compiler = &mut *(compiler_ptr as *mut crate::compiler::Compiler);
+                compiler.mark_immediate();
+            }
+        } else {
+            return Err(ForthError::NoCompilerAvailable);
+        }
+        Ok(())
+    }
+
+    fn op_state(&mut self) -> Result<(), ForthError> {
+        // STATE ( -- addr )
+        // Push the address of the compilation state variable
+        // Note: STATE is typically a system variable. For now, we'll
+        // use a fixed address in memory (address 0) to represent STATE.
+        // 0 = interpreting, non-zero = compiling
+        self.data_stack.push(0); // Fixed address for STATE variable
+        Ok(())
+    }
+
+    fn op_find_word(&mut self) -> Result<(), ForthError> {
+        // FIND-WORD ( addr len -- xt flag )
+        let len = self.data_stack.pop()? as usize;
+        let addr = self.data_stack.pop()? as usize;
+
+        if let Some(_compiler_ptr) = self.compiler {
+            unsafe {
+                // Cast the void pointer back to Compiler
+                // Note: This is using c_void as a type-erased pointer
+                // The actual Compiler type is defined in compiler.rs
+                let slice = std::slice::from_raw_parts(addr as *const u8, len);
+                let word = std::str::from_utf8(slice)
+                    .map_err(|_| ForthError::InvalidUtf8)?;
+
+                // We'll use a hash of the word name as the XT for now
+                // This is a simple approach - a real implementation would maintain
+                // a proper XT table
+                let xt = self.hash_word(word);
+
+                // For now, we assume all words exist (we can't check without Compiler type)
+                // This will be improved when we properly integrate with Compiler
+                self.data_stack.push(xt as i64);
+                self.data_stack.push(-1); // true (found) - placeholder
+            }
+        } else {
+            return Err(ForthError::NoCompilerAvailable);
+        }
+
+        Ok(())
+    }
+
+    // Helper function to create a simple hash for word names (used as XT)
+    fn hash_word(&self, word: &str) -> usize {
+        // Simple hash function - sum of ASCII values
+        word.bytes().map(|b| b as usize).sum()
+    }
+
+    fn op_execute(&mut self) -> Result<(), ForthError> {
+        // EXECUTE ( xt -- )
+        // TODO: This needs to execute the word at the given xt
+        // This is complex because it needs to run compiled code
+        let _xt = self.data_stack.pop()?;
+        // Placeholder - does nothing for now
+        Ok(())
+    }
+
+    fn op_is_immediate(&mut self) -> Result<(), ForthError> {
+        // IMMEDIATE? ( addr len -- flag )
+        let len = self.data_stack.pop()? as usize;
+        let addr = self.data_stack.pop()? as usize;
+
+        if let Some(compiler_ptr) = self.compiler {
+            unsafe {
+                let slice = std::slice::from_raw_parts(addr as *const u8, len);
+                let word = std::str::from_utf8(slice)
+                    .map_err(|_| ForthError::InvalidUtf8)?;
+
+                // Cast to Compiler and check immediate_words set
+                let compiler = &*(compiler_ptr as *mut crate::compiler::Compiler);
+                let is_immediate = compiler.is_immediate(word);
+
+                self.data_stack.push(if is_immediate { -1 } else { 0 });
+            }
+        } else {
+            return Err(ForthError::NoCompilerAvailable);
+        }
+
         Ok(())
     }
 }

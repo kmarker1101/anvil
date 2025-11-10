@@ -17,9 +17,22 @@ use inkwell::OptimizationLevel;
 use inkwell::targets::{Target, RelocMode, CodeModel, FileType, InitializationConfig};
 use inkwell::execution_engine::{ExecutionEngine, JitFunction};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::compiler::Instruction;
 use crate::primitives::Primitive;
+
+// Global pointer to Compiler for LLVM primitives to access immediate_words
+// This is set by the Executor and read by LLVM-compiled code
+static GLOBAL_COMPILER_PTR: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+pub fn set_global_compiler(compiler_ptr: *mut std::ffi::c_void) {
+    GLOBAL_COMPILER_PTR.store(compiler_ptr, Ordering::Release);
+}
+
+pub fn get_global_compiler() -> *mut std::ffi::c_void {
+    GLOBAL_COMPILER_PTR.load(Ordering::Acquire)
+}
 
 /// Macro to map Primitive enum variants to their extern "C" function names
 /// This generates the symbol registration and primitive declaration mappings
@@ -95,6 +108,11 @@ llvm_primitive_mappings! {
     Type => forth_type,
     I => forth_i,
     Depth => forth_depth,
+    Immediate => forth_immediate,
+    State => forth_state,
+    FindWord => forth_find_word,
+    Execute => forth_execute,
+    IsImmediate => forth_is_immediate,
 }
 
 /// Compiled function signature:
@@ -1751,6 +1769,103 @@ pub extern "C" fn forth_i(
             let index = *loop_stack.add(*loop_len - 2);
             stack_push(data_stack, data_len, index);
         }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_immediate(
+    _data_stack: *mut i64, _data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    // IMMEDIATE is a compile-time word that should be handled by the compiler
+    // This function should rarely be called during execution
+    // For now, it's a no-op
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_state(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // STATE ( -- addr )
+        // Push address 0 as the STATE variable address
+        // The value at address 0 in memory indicates compilation state
+        stack_push(data_stack, data_len, 0);
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_find_word(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // FIND-WORD ( addr len -- xt flag )
+        // TODO: Needs access to Compiler dictionary
+        let _len = stack_pop(data_stack, data_len);
+        let _addr = stack_pop(data_stack, data_len);
+        stack_push(data_stack, data_len, 0); // xt
+        stack_push(data_stack, data_len, 0); // flag (not found)
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_execute(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    _memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // EXECUTE ( xt -- )
+        // TODO: Execute the word at xt
+        let _xt = stack_pop(data_stack, data_len);
+        // Placeholder
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_is_immediate(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // IMMEDIATE? ( addr len -- flag )
+        let len = stack_pop(data_stack, data_len).unwrap_or(0) as usize;
+        let addr = stack_pop(data_stack, data_len).unwrap_or(0) as usize;
+
+        // Get compiler from global pointer
+        let compiler_ptr = get_global_compiler();
+        if compiler_ptr.is_null() {
+            eprintln!("WARNING: IMMEDIATE? called but no compiler available");
+            stack_push(data_stack, data_len, 0);
+            return;
+        }
+
+        // Get word string from memory
+        let slice = std::slice::from_raw_parts(memory.add(addr), len);
+        let word = match std::str::from_utf8(slice) {
+            Ok(w) => w,
+            Err(_) => {
+                stack_push(data_stack, data_len, 0);
+                return;
+            }
+        };
+
+        // Cast to Compiler and check
+        let compiler = &*(compiler_ptr as *mut crate::compiler::Compiler);
+        let is_immediate = compiler.is_immediate(word);
+
+        stack_push(data_stack, data_len, if is_immediate { -1 } else { 0 });
     }
 }
 

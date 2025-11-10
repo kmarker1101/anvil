@@ -125,3 +125,53 @@
 \ : FACTORIAL ( n -- n! )
 \   DUP 1 <= IF DROP 1 ELSE DUP 1 - FACTORIAL * THEN ;
 
+\ ============================================================================
+\ META-COMPILER IMMEDIATE WORDS
+\ ============================================================================
+\ These words control compilation and are marked IMMEDIATE
+\ They execute during compilation rather than being compiled
+
+\ [ and ] - switch compile/interpret modes
+\ : [  0 STATE ! ; IMMEDIATE
+\ : ]  1 STATE ! ;
+
+\ Control flow compilation words
+\ These emit bytecode during compilation
+
+\ : IF  ( -- addr )
+\   OP-BRANCH-IF-ZERO EMIT-OP
+\   CODE-HERE @          \ Save location for backpatching
+\   0 EMIT-CELL          \ Placeholder
+\   >BRANCH              \ Push to branch stack
+\ ; IMMEDIATE
+
+\ : THEN  ( addr -- )
+\   BRANCH>              \ Pop saved location
+\   CODE-HERE @ SWAP !   \ Backpatch with current location
+\ ; IMMEDIATE
+
+\ : ELSE  ( addr1 -- addr2 )
+\   OP-BRANCH EMIT-OP    \ Unconditional jump
+\   CODE-HERE @          \ Save new location
+\   0 EMIT-CELL          \ Placeholder
+\   SWAP                 \ Get IF's location
+\   CODE-HERE @ SWAP !   \ Backpatch IF
+\   >BRANCH              \ Save ELSE location
+\ ; IMMEDIATE
+
+\ : BEGIN  ( -- addr )
+\   CODE-HERE @          \ Mark loop start
+\ ; IMMEDIATE
+
+\ : UNTIL  ( addr -- )
+\   OP-BRANCH-IF-ZERO EMIT-OP
+\   EMIT-CELL            \ Emit backward branch to BEGIN
+\ ; IMMEDIATE
+
+\ : LITERAL  ( n -- )
+\   EMIT-LITERAL
+\ ; IMMEDIATE
+
+\ Note: These are commented out until the meta-compiler is fully integrated
+\ For now, control flow is handled by the Rust compiler
+

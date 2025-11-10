@@ -22,6 +22,9 @@ fn main() -> Result<()> {
         }
     };
 
+    // Update compiler pointers now that executor is in its final location
+    executor.update_compiler_pointers();
+
     // Load files from command line arguments
     let args: Vec<String> = env::args().collect();
     for file_path in args.iter().skip(1) {
