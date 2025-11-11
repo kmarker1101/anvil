@@ -16,16 +16,24 @@ enum CompileState {
 
 /// Information about a word in the dictionary
 #[derive(Debug, Clone)]
-pub struct WordInfo {
-    name: String,
-    address: BytecodeAddress,  // Starting address in bytecode
-    is_immediate: bool,
-    is_primitive: bool,
-    is_variable: bool,
-    is_constant: bool,
-    constant_value: Option<i64>,
-    memory_offset: Option<usize>,
-    source_tokens: Option<Vec<String>>, // For IMMEDIATE words
+pub enum WordInfo {
+    Primitive {
+        name: String,
+    },
+    UserDefined {
+        name: String,
+        address: BytecodeAddress,
+        is_immediate: bool,
+        source_tokens: Option<Vec<String>>, // For IMMEDIATE words
+    },
+    Variable {
+        name: String,
+        offset: usize,
+    },
+    Constant {
+        name: String,
+        value: i64,
+    },
 }
 
 /// Control flow frame for backpatching
@@ -65,10 +73,6 @@ pub struct BytecodeCompiler {
     token_stream: Vec<String>,
     token_index: usize,
 
-    /// Original source (for parsing strings with preserved whitespace)
-    source: String,
-    source_pos: usize,
-
     /// Variable allocation in memory
     variable_offsets: HashMap<String, usize>,
     next_variable_offset: usize,
@@ -90,8 +94,6 @@ impl BytecodeCompiler {
             control_stack: Vec::new(),
             token_stream: Vec::new(),
             token_index: 0,
-            source: String::new(),
-            source_pos: 0,
             variable_offsets: HashMap::new(),
             next_variable_offset: 0,
             interpreter: Interpreter::new(),
@@ -108,22 +110,15 @@ impl BytecodeCompiler {
         for (name, _prim) in Primitive::all() {
             self.dictionary.insert(
                 name.to_string(),
-                WordInfo {
+                WordInfo::Primitive {
                     name: name.to_string(),
-                    address: 0, // Primitives don't have bytecode addresses
-                    is_immediate: false,
-                    is_primitive: true,
-                    is_variable: false,
-                    is_constant: false,
-                    constant_value: None,
-                    memory_offset: None,
-                    source_tokens: None,
                 },
             );
         }
     }
 
     /// Tokenize Forth source code
+    /// Special handling: ." and S" tokens capture the entire string including quotes
     fn tokenize(source: &str) -> Vec<String> {
         let mut tokens = Vec::new();
         let mut chars = source.chars().peekable();
@@ -134,8 +129,35 @@ impl BytecodeCompiler {
                 // Whitespace - end current token
                 ' ' | '\t' | '\n' | '\r' => {
                     if !current_token.is_empty() {
-                        tokens.push(current_token.clone());
-                        current_token.clear();
+                        // Check if this is ." or S" - if so, capture the string
+                        if current_token == ".\"" || current_token == "S\"" {
+                            tokens.push(current_token.clone());
+                            current_token.clear();
+
+                            // Skip one space if present (delimiter)
+                            if chars.peek() == Some(&' ') {
+                                chars.next();
+                            }
+
+                            // Capture until closing quote
+                            let mut string_content = String::new();
+                            let mut found_close = false;
+                            while let Some(ch) = chars.next() {
+                                if ch == '"' {
+                                    found_close = true;
+                                    break;
+                                }
+                                string_content.push(ch);
+                            }
+
+                            if found_close {
+                                // Push the string content as a token (without quotes)
+                                tokens.push(string_content);
+                            }
+                        } else {
+                            tokens.push(current_token.clone());
+                            current_token.clear();
+                        }
                     }
                 }
 
@@ -191,8 +213,6 @@ impl BytecodeCompiler {
 
     /// Process Forth source code
     pub fn process_source(&mut self, source: &str) -> Result<(), String> {
-        self.source = source.to_string();
-        self.source_pos = 0;
         self.token_stream = Self::tokenize(source);
         self.token_index = 0;
 
@@ -252,49 +272,8 @@ impl BytecodeCompiler {
         }
     }
 
-    /// Parse a string from source until closing quote, preserving whitespace
-    fn parse_string_from_source(&mut self) -> Result<String, String> {
-        // Find the opening quote (the " in ." or S")
-        let remaining = &self.source[self.source_pos..];
-        let quote_pos = remaining
-            .find('"')
-            .ok_or("String parsing error: no opening quote found")?;
-
-        // Start after the opening quote
-        let start = self.source_pos + quote_pos + 1;
-
-        // Find the closing quote
-        let remaining = &self.source[start..];
-        let end_pos = remaining
-            .find('"')
-            .ok_or("String missing closing quote")?;
-
-        // Remove one leading space if present (delimiter after ." or S")
-        let text = if remaining.starts_with(' ') && end_pos > 0 {
-            remaining[1..end_pos].to_string()
-        } else {
-            remaining[..end_pos].to_string()
-        };
-
-        // Update source position to after the closing quote
-        self.source_pos = start + end_pos + 1;
-
-        Ok(text)
-    }
-
-    /// Sync source_pos to current token position
-    fn sync_source_pos(&mut self, token: &str) {
-        // Find the token in the source starting from current position
-        if let Some(pos) = self.source[self.source_pos..].find(token) {
-            self.source_pos += pos;
-        }
-    }
-
     /// Process a single token
     fn process_token(&mut self, token: &str) -> Result<(), String> {
-        // Sync source position to this token
-        self.sync_source_pos(token);
-
         // Capture tokens while defining a word (for IMMEDIATE words)
         if self.state == CompileState::Compile && self.current_word_name.is_some() {
             if token != ";" && Some(token.to_uppercase()) != self.current_word_name.as_ref().map(|s| s.to_uppercase()) {
@@ -369,23 +348,17 @@ impl BytecodeCompiler {
                 // Look up word in dictionary
                 if let Some(word_info) = self.dictionary.get(&word_upper).cloned() {
                     // Check if IMMEDIATE word during compilation
-                    if word_info.is_immediate && self.state == CompileState::Compile {
-                        // Re-execute tokens
-                        if let Some(ref tokens) = word_info.source_tokens {
+                    if let WordInfo::UserDefined { is_immediate: true, source_tokens: Some(ref tokens), .. } = word_info {
+                        if self.state == CompileState::Compile {
+                            // Re-execute tokens
                             for token in tokens {
                                 self.process_token(token)?;
                             }
-                            Ok(())
-                        } else {
-                            Err(format!("IMMEDIATE word {} has no source tokens", word_info.name))
+                            return Ok(());
                         }
-                    } else if self.state == CompileState::Compile {
-                        // Compile word call
-                        self.compile_word_call(&word_info)
-                    } else {
-                        // Interpret mode - execute word
-                        self.execute_word(&word_info)
                     }
+                    // Process word (compile or execute based on state)
+                    self.process_word(&word_info, self.state == CompileState::Compile)
                 } else {
                     Err(format!("Unknown word: {}", token))
                 }
@@ -421,10 +394,6 @@ impl BytecodeCompiler {
         let word_name = self.current_word_name.take()
             .ok_or("No word name set")?;
 
-        // Check if next token is IMMEDIATE
-        let _will_be_immediate = self.token_index < self.token_stream.len()
-            && self.token_stream[self.token_index].to_uppercase() == "IMMEDIATE";
-
         // Store tokens for IMMEDIATE words
         let source_tokens = if !self.current_word_tokens.is_empty() {
             Some(self.current_word_tokens.clone())
@@ -438,15 +407,10 @@ impl BytecodeCompiler {
         // Add to dictionary
         self.dictionary.insert(
             word_name.clone(),
-            WordInfo {
+            WordInfo::UserDefined {
                 name: word_name.clone(),
                 address: self.current_word_start,
                 is_immediate: false, // Will be set by mark_immediate
-                is_primitive: false,
-                is_variable: false,
-                is_constant: false,
-                constant_value: None,
-                memory_offset: None,
                 source_tokens,
             },
         );
@@ -466,58 +430,53 @@ impl BytecodeCompiler {
             .clone();
 
         if let Some(word_info) = self.dictionary.get_mut(&word_name) {
-            word_info.is_immediate = true;
-            Ok(())
+            if let WordInfo::UserDefined { is_immediate, .. } = word_info {
+                *is_immediate = true;
+                Ok(())
+            } else {
+                Err(format!("Cannot mark {} as IMMEDIATE (not a user-defined word)", word_name))
+            }
         } else {
             Err(format!("Word not found: {}", word_name))
         }
     }
 
-    /// Compile a call to a word
-    fn compile_word_call(&mut self, word_info: &WordInfo) -> Result<(), String> {
-        if word_info.is_primitive {
-            // Emit primitive instruction
-            let prim = Primitive::from_name(&word_info.name)
-                .ok_or(format!("Unknown primitive: {}", word_info.name))?;
-            self.emit(Instruction::Primitive(prim));
-        } else if word_info.is_variable {
-            // Push variable offset
-            let offset = word_info.memory_offset
-                .ok_or("Variable has no offset")?;
-            self.emit(Instruction::PushVariable(offset));
-        } else if word_info.is_constant {
-            // Push constant value
-            let value = word_info.constant_value
-                .ok_or("Constant has no value")?;
-            self.emit(Instruction::PushConstant(value));
-        } else {
-            // Call user-defined word
-            self.emit(Instruction::Call(word_info.address));
+    /// Process a word - either compile it or execute it immediately
+    fn process_word(&mut self, word_info: &WordInfo, compile_mode: bool) -> Result<(), String> {
+        match word_info {
+            WordInfo::Primitive { name } => {
+                let prim = Primitive::from_name(name)
+                    .ok_or(format!("Unknown primitive: {}", name))?;
+                if compile_mode {
+                    self.emit(Instruction::Primitive(prim));
+                } else {
+                    self.interpreter.vm.execute_primitive(prim)
+                        .map_err(|e| format!("Primitive error: {:?}", e))?;
+                }
+            }
+            WordInfo::Variable { offset, .. } => {
+                if compile_mode {
+                    self.emit(Instruction::PushVariable(*offset));
+                } else {
+                    self.interpreter.vm.data_stack.push(*offset as i64);
+                }
+            }
+            WordInfo::Constant { value, .. } => {
+                if compile_mode {
+                    self.emit(Instruction::PushConstant(*value));
+                } else {
+                    self.interpreter.vm.data_stack.push(*value);
+                }
+            }
+            WordInfo::UserDefined { address, .. } => {
+                if compile_mode {
+                    self.emit(Instruction::Call(*address));
+                } else {
+                    self.interpreter.execute(&self.bytecode, *address)?;
+                }
+            }
         }
         Ok(())
-    }
-
-    /// Execute a word immediately (interpret mode)
-    fn execute_word(&mut self, word_info: &WordInfo) -> Result<(), String> {
-        if word_info.is_primitive {
-            let prim = Primitive::from_name(&word_info.name)
-                .ok_or(format!("Unknown primitive: {}", word_info.name))?;
-            self.interpreter.vm.execute_primitive(prim)
-                .map_err(|e| format!("Primitive error: {:?}", e))
-        } else if word_info.is_variable {
-            let offset = word_info.memory_offset
-                .ok_or("Variable has no offset")?;
-            self.interpreter.vm.data_stack.push(offset as i64);
-            Ok(())
-        } else if word_info.is_constant {
-            let value = word_info.constant_value
-                .ok_or("Constant has no value")?;
-            self.interpreter.vm.data_stack.push(value);
-            Ok(())
-        } else {
-            // Execute user word
-            self.interpreter.execute(&self.bytecode, word_info.address)
-        }
     }
 
     // Control flow implementations...
@@ -835,16 +794,9 @@ impl BytecodeCompiler {
         // Add to dictionary
         self.dictionary.insert(
             name.to_string(),
-            WordInfo {
+            WordInfo::Variable {
                 name: name.to_string(),
-                address: 0,
-                is_immediate: false,
-                is_primitive: false,
-                is_variable: true,
-                is_constant: false,
-                constant_value: None,
-                memory_offset: Some(offset),
-                source_tokens: None,
+                offset,
             },
         );
 
@@ -869,16 +821,9 @@ impl BytecodeCompiler {
         // Add to dictionary
         self.dictionary.insert(
             name.to_string(),
-            WordInfo {
+            WordInfo::Constant {
                 name: name.to_string(),
-                address: 0,
-                is_immediate: false,
-                is_primitive: false,
-                is_variable: false,
-                is_constant: true,
-                constant_value: Some(value),
-                memory_offset: None,
-                source_tokens: None,
+                value,
             },
         );
 
@@ -910,17 +855,12 @@ impl BytecodeCompiler {
 
     /// ." - Print string at compile time or runtime
     fn immediate_dot_quote(&mut self) -> Result<(), String> {
-        // Parse string directly from source to preserve whitespace
-        let text = self.parse_string_from_source()?;
-
-        // Skip tokens until we're past the closing quote
-        while self.token_index < self.token_stream.len() {
-            let token = &self.token_stream[self.token_index];
-            self.token_index += 1;
-            if token.ends_with('"') {
-                break;
-            }
+        // Get the string content from the next token (tokenizer captured it)
+        if self.token_index >= self.token_stream.len() {
+            return Err(".\" missing string content".to_string());
         }
+        let text = self.token_stream[self.token_index].clone();
+        self.token_index += 1;
 
         if self.state == CompileState::Compile {
             // Emit EMIT calls for each character
@@ -941,18 +881,13 @@ impl BytecodeCompiler {
 
     /// S" - Create string literal (address and length on stack)
     fn immediate_s_quote(&mut self) -> Result<(), String> {
-        // Parse string directly from source to preserve whitespace
-        let text = self.parse_string_from_source()?;
-        let text_bytes = text.as_bytes();
-
-        // Skip tokens until we're past the closing quote
-        while self.token_index < self.token_stream.len() {
-            let token = &self.token_stream[self.token_index];
-            self.token_index += 1;
-            if token.ends_with('"') {
-                break;
-            }
+        // Get the string content from the next token (tokenizer captured it)
+        if self.token_index >= self.token_stream.len() {
+            return Err("S\" missing string content".to_string());
         }
+        let text = self.token_stream[self.token_index].clone();
+        self.token_index += 1;
+        let text_bytes = text.as_bytes();
 
         if self.state == CompileState::Compile {
             // Allocate string in memory at compile time and embed the address/length
