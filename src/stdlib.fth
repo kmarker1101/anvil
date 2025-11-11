@@ -8,6 +8,26 @@
 #32 CONSTANT BL
 
 \ ============================================================================
+\ VARIABLES
+\ ============================================================================
+
+VARIABLE BASE
+#10 BASE !
+
+\ ============================================================================
+\ SYSTEM
+\ ============================================================================
+
+\ BYE exits - handled specially by REPL, no-op when defined here
+: BYE ;
+
+\ ============================================================================
+\ I/O
+\ ============================================================================
+
+: CR ( -- ) 10 EMIT ;
+
+\ ============================================================================
 \ STACK OPERATIONS
 \ ============================================================================
 
@@ -78,11 +98,13 @@
 
 : TRUE ( -- -1 ) -1 ;
 : FALSE ( -- 0 ) 0 ;
+: NOT    ( flag -- ~flag ) 0= ;
 
 \ ============================================================================
 \ MEMORY HELPERS
 \ ============================================================================
 
+: CHAR+ ( addr -- addr+1 ) 1+ ;
 : +! ( n addr -- ) DUP @ ROT + SWAP ! ;
 : FILL ( c-char u char -- ) ROT ROT 0 ?DO 2DUP C! CHAR+ LOOP 2DROP ;
 
@@ -91,6 +113,20 @@
 \ ============================================================================
 
 : COUNT ( c-addr -- addr len ) DUP 1+ SWAP C@ ;
+: _cmp ( x1 x2 -- -1|0|1 ) - DUP IF 0< IF -1 ELSE 1 THEN THEN ;
+: COMPARE ( addr1 u1 addr2 u2 -- -1|0|1 )
+  ROT 2DUP SWAP _cmp >R
+  MIN ?DUP IF
+    0 DO
+      COUNT >R SWAP COUNT R> _cmp ?DUP IF
+        NIP NIP UNLOOP R> DROP EXIT
+      THEN
+      SWAP
+    LOOP
+  THEN
+  2DROP
+  R>
+;
 : S=  ( addr1 len1 addr2 len2 -- flag ) COMPARE 0= ;
 
 \ ============================================================================
@@ -104,7 +140,7 @@
 \ CHARS
 \ ============================================================================
 
-: CHAR ( "char"<space> -- c ) BL WORD CHAR+ C@ ;
+\ CHAR is implemented as an IMMEDIATE word in the compiler
 : SPACE ( -- ) BL EMIT ;
 : SPACES ( n -- ) 0 ?DO SPACE LOOP ;
 
@@ -119,3 +155,11 @@
 \ : FACTORIAL ( n -- n! )
 \   DUP 1 <= IF DROP 1 ELSE DUP 1 - FACTORIAL * THEN ;
 
+\ UNLESS - inverted IF
+: UNLESS  ( flag -- )
+    0= IF
+; IMMEDIATE
+
+: ENDUNLESS
+    THEN
+; IMMEDIATE

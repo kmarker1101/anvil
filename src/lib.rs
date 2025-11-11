@@ -1,5 +1,4 @@
 pub mod primitives;
-pub mod lexer;
-pub mod parser;
-pub mod compiler;
-pub mod llvm_jit;
+pub mod bytecode;
+pub mod interpreter;
+pub mod bytecode_compiler;

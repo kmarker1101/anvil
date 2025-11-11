@@ -62,8 +62,8 @@ VARIABLE TEST-FILE-LEN
 : REPORT ( -- )
     CR
     TESTS-FAILED @ 0= IF
-        ." All " TESTS-RUN @ . ." tests passed" CR
+        ." All" SPACE TESTS-RUN @ . ." tests passed" CR
     ELSE
-        TESTS-FAILED @ . ." of " TESTS-RUN @ . ." tests failed" CR
+        TESTS-FAILED @ . ." of" SPACE TESTS-RUN @ . ." tests failed" CR
     THEN ;
 

@@ -1,32 +1,41 @@
-// main.rs - Forth REPL (Read-Eval-Print Loop)
+// main_bytecode.rs - Forth REPL using bytecode interpreter
 
-use forth::compiler::Executor;
-use forth::lexer::Lexer;
-use forth::parser::Parser;
+use anvil::bytecode_compiler::BytecodeCompiler;
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result};
 use std::env;
 use std::fs;
 
 fn main() -> Result<()> {
-    println!("Anvil Forth v0.1.0");
+    println!("Anvil Forth v0.3.0 (Bytecode Interpreter)");
     println!("Type .help for help, bye to exit");
     println!();
 
-    let mut executor = match Executor::with_stdlib() {
-        Ok(exec) => exec,
-        Err(e) => {
-            eprintln!("Error loading standard library: {}", e);
-            eprintln!("Starting without stdlib...");
-            Executor::new()
-        }
-    };
+    let mut compiler = BytecodeCompiler::new();
+
+    // Load standard library
+    let stdlib = include_str!("stdlib.fth");
+    compiler.process_source(stdlib)
+        .map_err(|e| {
+            eprintln!("Error loading stdlib: {}", e);
+            std::io::Error::other(e)
+        })?;
 
     // Load files from command line arguments
     let args: Vec<String> = env::args().collect();
     for file_path in args.iter().skip(1) {
-        match load_file(&mut executor, file_path) {
-            Ok(()) => println!("Loaded: {}", file_path),
+        match load_file(&mut compiler, file_path) {
+            Ok(()) => {
+                println!("Loaded: {}", file_path);
+                // Check if file contains BYE - if so, exit immediately
+                if let Ok(contents) = fs::read_to_string(file_path) {
+                    let has_bye = contents.lines()
+                        .any(|line| line.trim().to_uppercase() == "BYE");
+                    if has_bye {
+                        return Ok(());
+                    }
+                }
+            }
             Err(e) => {
                 if e == "EXIT" {
                     return Ok(());
@@ -69,11 +78,10 @@ fn main() -> Result<()> {
                 let _ = rl.add_history_entry(input);
 
                 // Move cursor back to the end of the input line (gforth style)
-                // Rustyline has moved to a new line, so we go back up
                 print!("\x1b[A\x1b[{}C ", input.len());
 
-                // Handle REPL commands (but not the Forth "." word)
-                if input.starts_with('.') && input != "." {
+                // Handle REPL commands (but not the Forth "." word or ." string literal)
+                if input.starts_with('.') && input != "." && !input.starts_with(".\"") {
                     let cmd = input.to_lowercase();
                     match cmd.as_str() {
                         ".quit" | ".exit" | ".q" => {
@@ -87,16 +95,16 @@ fn main() -> Result<()> {
                         }
                         ".words" | ".w" => {
                             println!();
-                            print_words(&executor);
+                            print_words(&compiler);
                             continue;
                         }
                         ".stack" | ".s" => {
-                            print_stack(&executor);
+                            print_stack(&compiler);
                             println!(" ok");
                             continue;
                         }
                         ".clear" => {
-                            executor.vm_mut().data_stack.clear();
+                            compiler.interpreter.vm.data_stack.clear();
                             println!(" ok");
                             continue;
                         }
@@ -109,6 +117,12 @@ fn main() -> Result<()> {
                     }
                 }
 
+                // Check for BYE word (Forth standard exit)
+                if input.to_uppercase() == "BYE" {
+                    println!();
+                    break;
+                }
+
                 // Track if we're in a definition
                 if input.contains(':') && !input.contains(';') {
                     in_definition = true;
@@ -117,18 +131,22 @@ fn main() -> Result<()> {
                     in_definition = false;
                 }
 
-                // Check for BYE word (Forth standard exit)
-                if input.to_uppercase() == "BYE" {
-                    println!();
-                    break;
-                }
-
                 // Check for INCLUDE word (load a file)
                 let upper_input = input.to_uppercase();
                 if upper_input.starts_with("INCLUDE ") {
                     let file_path = input[8..].trim();
-                    match load_file(&mut executor, file_path) {
-                        Ok(()) => println!(" ok"),
+                    match load_file(&mut compiler, file_path) {
+                        Ok(()) => {
+                            println!(" ok");
+                            // Check if file contains BYE - if so, exit REPL
+                            if let Ok(contents) = std::fs::read_to_string(file_path) {
+                                let has_bye = contents.lines()
+                                    .any(|line| line.trim().to_uppercase() == "BYE");
+                                if has_bye {
+                                    break;
+                                }
+                            }
+                        }
                         Err(e) => {
                             if e == "EXIT" {
                                 println!();
@@ -141,12 +159,15 @@ fn main() -> Result<()> {
                 }
 
                 // Process Forth code
-                match process_input(&mut executor, input) {
+                match compiler.process_source(input) {
                     Ok(()) => {
-                        // Print " ok" on same line (gforth style)
                         println!(" ok");
                     }
                     Err(e) => {
+                        if e.contains("BYE") {
+                            println!();
+                            break;
+                        }
                         println!(" {}", e);
                     }
                 }
@@ -174,33 +195,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_file(executor: &mut Executor, file_path: &str) -> std::result::Result<(), String> {
-    // Read file contents
+fn load_file(compiler: &mut BytecodeCompiler, file_path: &str) -> std::result::Result<(), String> {
     let contents = fs::read_to_string(file_path)
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
-    // Manually handle INCLUDE statements by preprocessing (before uppercasing)
     let processed = preprocess_includes(&contents, file_path)?;
-
-    // Convert to uppercase for case-insensitive word matching
-    let processed_upper = processed.to_uppercase();
-
-    // Set input buffer for WORD primitive
-    executor.vm_mut().set_input(&processed_upper);
-
-    // Process the file
-    let mut lexer = Lexer::new(&processed_upper);
-    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
-
-    let mut parser = Parser::new(tokens);
-    let program = parser.parse().map_err(|e| e.to_string())?;
-
-    executor.execute_program(program)?;
-
-    // Check if BYE was executed
-    if executor.should_exit() {
-        return Err("EXIT".to_string());
-    }
+    compiler.process_source(&processed)?;
 
     Ok(())
 }
@@ -211,18 +211,14 @@ fn preprocess_includes(contents: &str, base_path: &str) -> std::result::Result<S
     for line in contents.lines() {
         let trimmed = line.trim();
         let upper_trimmed = trimmed.to_uppercase();
+
         if upper_trimmed.starts_with("INCLUDE ") {
-            // Extract the file path (preserve original case for filesystem)
             let include_path = trimmed[8..].trim();
 
-            // Try the path as-is first (relative to cwd or absolute)
-            let full_path = if std::path::Path::new(include_path).is_absolute() {
-                include_path.to_string()
-            } else if std::path::Path::new(include_path).exists() {
-                // Path exists relative to cwd
+            let full_path = if std::path::Path::new(include_path).is_absolute()
+                || std::path::Path::new(include_path).exists() {
                 include_path.to_string()
             } else {
-                // Try relative to the including file's directory
                 let base_dir = std::path::Path::new(base_path)
                     .parent()
                     .unwrap_or(std::path::Path::new("."));
@@ -230,12 +226,10 @@ fn preprocess_includes(contents: &str, base_path: &str) -> std::result::Result<S
                 if relative_path.exists() {
                     relative_path.to_string_lossy().to_string()
                 } else {
-                    // Fall back to original path (will error with better message)
                     include_path.to_string()
                 }
             };
 
-            // Recursively load the included file
             let included_contents = fs::read_to_string(&full_path)
                 .map_err(|e| format!("Failed to include {}: {}", full_path, e))?;
             let processed_included = preprocess_includes(&included_contents, &full_path)?;
@@ -248,27 +242,6 @@ fn preprocess_includes(contents: &str, base_path: &str) -> std::result::Result<S
     }
 
     Ok(result)
-}
-
-fn process_input(executor: &mut Executor, input: &str) -> std::result::Result<(), String> {
-    // Convert to uppercase for case-insensitive word matching
-    let input = input.to_uppercase();
-
-    // Set input buffer for WORD primitive
-    executor.vm_mut().set_input(&input);
-
-    // Tokenize
-    let mut lexer = Lexer::new(&input);
-    let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
-
-    // Parse
-    let mut parser = Parser::new(tokens);
-    let program = parser.parse().map_err(|e| e.to_string())?;
-
-    // Compile and execute (handles both definitions and immediate expressions)
-    executor.execute_program(program)?;
-
-    Ok(())
 }
 
 fn print_help() {
@@ -295,8 +268,8 @@ fn print_help() {
     println!("  INCLUDE mylib.fth ( load definitions from file )");
 }
 
-fn print_words(executor: &Executor) {
-    let mut words = executor.compiler().words();
+fn print_words(compiler: &BytecodeCompiler) {
+    let mut words: Vec<_> = compiler.dictionary.keys().cloned().collect();
     words.sort();
 
     println!("Defined words ({}):", words.len());
@@ -311,11 +284,10 @@ fn print_words(executor: &Executor) {
     }
 }
 
-fn print_stack(executor: &Executor) {
-    let depth = executor.vm().data_stack.depth();
+fn print_stack(compiler: &BytecodeCompiler) {
+    let depth = compiler.interpreter.vm.data_stack.depth();
     print!("<{}> ", depth);
-    // Print stack from bottom to top
-    for val in executor.vm().data_stack.iter() {
+    for val in compiler.interpreter.vm.data_stack.iter() {
         print!("{} ", val);
     }
 }
