@@ -142,7 +142,7 @@ impl BytecodeCompiler {
                             // Capture until closing quote
                             let mut string_content = String::new();
                             let mut found_close = false;
-                            while let Some(ch) = chars.next() {
+                            for ch in chars.by_ref() {
                                 if ch == '"' {
                                     found_close = true;
                                     break;
@@ -169,7 +169,7 @@ impl BytecodeCompiler {
                         current_token.clear();
                     }
                     // Skip until closing paren
-                    while let Some(ch) = chars.next() {
+                    for ch in chars.by_ref() {
                         if ch == ')' {
                             break;
                         }
@@ -185,7 +185,7 @@ impl BytecodeCompiler {
                             current_token.clear();
                         }
                         // Skip rest of line
-                        while let Some(ch) = chars.next() {
+                        for ch in chars.by_ref() {
                             if ch == '\n' {
                                 break;
                             }
@@ -275,10 +275,9 @@ impl BytecodeCompiler {
     /// Process a single token
     fn process_token(&mut self, token: &str) -> Result<(), String> {
         // Capture tokens while defining a word (for IMMEDIATE words)
-        if self.state == CompileState::Compile && self.current_word_name.is_some() {
-            if token != ";" && Some(token.to_uppercase()) != self.current_word_name.as_ref().map(|s| s.to_uppercase()) {
-                self.current_word_tokens.push(token.to_string());
-            }
+        if self.state == CompileState::Compile && self.current_word_name.is_some()
+            && token != ";" && Some(token.to_uppercase()) != self.current_word_name.as_ref().map(|s| s.to_uppercase()) {
+            self.current_word_tokens.push(token.to_string());
         }
 
         // Handle special states
@@ -293,12 +292,12 @@ impl BytecodeCompiler {
         }
 
         // Try to parse as number
-        let num_result = if token.starts_with('#') {
-            token[1..].parse::<i64>()
-        } else if token.starts_with('$') {
-            i64::from_str_radix(&token[1..], 16)
-        } else if token.starts_with('%') {
-            i64::from_str_radix(&token[1..], 2)
+        let num_result = if let Some(stripped) = token.strip_prefix('#') {
+            stripped.parse::<i64>()
+        } else if let Some(stripped) = token.strip_prefix('$') {
+            i64::from_str_radix(stripped, 16)
+        } else if let Some(stripped) = token.strip_prefix('%') {
+            i64::from_str_radix(stripped, 2)
         } else {
             token.parse::<i64>()
         };
@@ -348,14 +347,13 @@ impl BytecodeCompiler {
                 // Look up word in dictionary
                 if let Some(word_info) = self.dictionary.get(&word_upper).cloned() {
                     // Check if IMMEDIATE word during compilation
-                    if let WordInfo::UserDefined { is_immediate: true, source_tokens: Some(ref tokens), .. } = word_info {
-                        if self.state == CompileState::Compile {
-                            // Re-execute tokens
-                            for token in tokens {
-                                self.process_token(token)?;
-                            }
-                            return Ok(());
+                    if let WordInfo::UserDefined { is_immediate: true, source_tokens: Some(ref tokens), .. } = word_info
+                        && self.state == CompileState::Compile {
+                        // Re-execute tokens
+                        for token in tokens {
+                            self.process_token(token)?;
                         }
+                        return Ok(());
                     }
                     // Process word (compile or execute based on state)
                     self.process_word(&word_info, self.state == CompileState::Compile)
@@ -654,9 +652,10 @@ impl BytecodeCompiler {
         Ok(())
     }
 
-    fn immediate_loop(&mut self) -> Result<(), String> {
+    /// Helper for both LOOP and +LOOP
+    fn compile_loop_end(&mut self, loop_instruction: Instruction, loop_name: &str) -> Result<(), String> {
         if self.state != CompileState::Compile {
-            return Err("LOOP outside of definition".to_string());
+            return Err(format!("{} outside of definition", loop_name));
         }
 
         // Check if this is a ?DO loop (will have QuestionDo frame on top)
@@ -678,15 +677,15 @@ impl BytecodeCompiler {
 
         // Pop the Do frame
         let frame = self.control_stack.pop()
-            .ok_or("LOOP without DO")?;
+            .ok_or(format!("{} without DO", loop_name))?;
 
         match frame {
             ControlFrame::Do { start_addr } => {
-                // Increment and check - if done, jump to end; if not done, fall through
-                self.emit(Instruction::LoopCheck(PLACEHOLDER_ADDR));
+                // Emit loop check instruction with placeholder
+                self.emit(loop_instruction);
                 let loop_check_addr = self.here() - 1;
 
-                // Jump back to loop start (if not done)
+                // Jump back to loop start
                 self.emit(Instruction::Jump(start_addr));
 
                 let end_addr = self.here();
@@ -699,61 +698,18 @@ impl BytecodeCompiler {
                     self.backpatch(addr, end_addr);
                 }
             }
-            _ => return Err("LOOP without matching DO".to_string()),
+            _ => return Err(format!("{} without matching DO", loop_name)),
         }
 
         Ok(())
     }
 
+    fn immediate_loop(&mut self) -> Result<(), String> {
+        self.compile_loop_end(Instruction::LoopCheck(PLACEHOLDER_ADDR), "LOOP")
+    }
+
     fn immediate_plus_loop(&mut self) -> Result<(), String> {
-        if self.state != CompileState::Compile {
-            return Err("+LOOP outside of definition".to_string());
-        }
-
-        // Check if this is a ?DO loop (will have QuestionDo frame on top)
-        let is_question_do = matches!(
-            self.control_stack.last(),
-            Some(ControlFrame::QuestionDo { .. })
-        );
-
-        // Pop QuestionDo frame if present
-        let question_do_setup_addr = if is_question_do {
-            if let Some(ControlFrame::QuestionDo { question_do_setup_addr }) = self.control_stack.pop() {
-                Some(question_do_setup_addr)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        // Pop the Do frame
-        let frame = self.control_stack.pop()
-            .ok_or("+LOOP without DO")?;
-
-        match frame {
-            ControlFrame::Do { start_addr } => {
-                // Emit +loop check with jump to after loop
-                self.emit(Instruction::PlusLoopCheck(PLACEHOLDER_ADDR));
-                let loop_check_addr = self.here() - 1;
-
-                // Jump back to loop start
-                self.emit(Instruction::Jump(start_addr));
-
-                let end_addr = self.here();
-
-                // Backpatch loop check to jump here (after loop)
-                self.backpatch(loop_check_addr, end_addr);
-
-                // Backpatch ?DO setup if this was a ?DO loop
-                if let Some(addr) = question_do_setup_addr {
-                    self.backpatch(addr, end_addr);
-                }
-            }
-            _ => return Err("+LOOP without matching DO".to_string()),
-        }
-
-        Ok(())
+        self.compile_loop_end(Instruction::PlusLoopCheck(PLACEHOLDER_ADDR), "+LOOP")
     }
 
     fn immediate_exit(&mut self) -> Result<(), String> {

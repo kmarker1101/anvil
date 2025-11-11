@@ -629,7 +629,7 @@ impl VM {
         base_bytes.copy_from_slice(&self.memory[BASE_ADDR..BASE_ADDR + 8]);
         let base = i64::from_le_bytes(base_bytes) as u32;
 
-        if base < 2 || base > 36 {
+        if !(2..=36).contains(&base) {
             return Err(ForthError::InvalidMemoryAddress); // Invalid base
         }
 

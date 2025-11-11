@@ -18,7 +18,7 @@ fn main() -> Result<()> {
     compiler.process_source(stdlib)
         .map_err(|e| {
             eprintln!("Error loading stdlib: {}", e);
-            std::io::Error::new(std::io::ErrorKind::Other, e)
+            std::io::Error::other(e)
         })?;
 
     // Load files from command line arguments
@@ -215,9 +215,8 @@ fn preprocess_includes(contents: &str, base_path: &str) -> std::result::Result<S
         if upper_trimmed.starts_with("INCLUDE ") {
             let include_path = trimmed[8..].trim();
 
-            let full_path = if std::path::Path::new(include_path).is_absolute() {
-                include_path.to_string()
-            } else if std::path::Path::new(include_path).exists() {
+            let full_path = if std::path::Path::new(include_path).is_absolute()
+                || std::path::Path::new(include_path).exists() {
                 include_path.to_string()
             } else {
                 let base_dir = std::path::Path::new(base_path)
