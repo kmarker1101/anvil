@@ -73,9 +73,31 @@ impl Stack {
         self.data.get(index).copied()
     }
 
+    /// Set a value at the given index (0 = bottom of stack)
+    pub fn set(&mut self, index: usize, value: i64) -> Result<(), ForthError> {
+        if index < self.data.len() {
+            self.data[index] = value;
+            Ok(())
+        } else {
+            Err(ForthError::StackUnderflow)
+        }
+    }
+
     /// Iterate over stack values from bottom to top
     pub fn iter(&self) -> impl Iterator<Item = &i64> {
         self.data.iter()
+    }
+
+    /// Get mutable pointer to stack data (for JIT execution)
+    pub fn as_mut_ptr(&mut self) -> *mut i64 {
+        self.data.as_mut_ptr()
+    }
+
+    /// Set stack depth (for JIT execution)
+    pub fn set_depth(&mut self, depth: usize) {
+        unsafe {
+            self.data.set_len(depth);
+        }
     }
 }
 
@@ -119,6 +141,18 @@ impl ReturnStack {
 
     pub fn iter(&self) -> impl Iterator<Item = &i64> {
         self.data.iter()
+    }
+
+    /// Get mutable pointer to stack data (for JIT execution)
+    pub fn as_mut_ptr(&mut self) -> *mut i64 {
+        self.data.as_mut_ptr()
+    }
+
+    /// Set stack depth (for JIT execution)
+    pub fn set_depth(&mut self, depth: usize) {
+        unsafe {
+            self.data.set_len(depth);
+        }
     }
 }
 
@@ -176,6 +210,16 @@ macro_rules! define_primitives {
                     $(
                         Primitive::$variant => $name,
                     )*
+                }
+            }
+
+            /// Get a primitive by its Forth name
+            pub fn from_name(name: &str) -> Option<Primitive> {
+                match name {
+                    $(
+                        $name => Some(Primitive::$variant),
+                    )*
+                    _ => None,
                 }
             }
 
@@ -255,11 +299,11 @@ define_primitives! {
     Emit => "EMIT": "EMIT ( c -- ) Output character" => op_emit,
     Key => "KEY": "KEY ( -- c ) Input character" => op_key,
     Dot => ".": ". ( n -- ) Print number and space" => op_dot,
-    Cr => "CR": "CR ( -- ) Print newline" => op_cr,
     Type => "TYPE": "TYPE ( addr len -- ) Print string from memory" => op_type,
 
     // Loop
     I => "I": "I ( -- n ) Get current loop index" => op_i,
+    Unloop => "UNLOOP": "UNLOOP ( -- ) Discard loop control parameters" => op_unloop,
 
     // Stack inspection
     Depth => "DEPTH": "DEPTH ( -- n ) Get number of items on data stack" => op_depth,
@@ -864,13 +908,6 @@ impl VM {
         Ok(())
     }
 
-    fn op_cr(&mut self) -> Result<(), ForthError> {
-        // CR ( -- )
-        // Print a newline
-        println!();
-        Ok(())
-    }
-
     fn op_type(&mut self) -> Result<(), ForthError> {
         // TYPE ( addr len -- )
         // Print string from memory
@@ -897,13 +934,25 @@ impl VM {
     fn op_i(&mut self) -> Result<(), ForthError> {
         // I ( -- n )
         // Push the current loop index onto the data stack
-        // The loop index is stored on top of the loop stack
-        if self.loop_stack.depth() == 0 {
+        // Loop stack has [index, limit] so index is at depth - 2
+        if self.loop_stack.depth() < 2 {
             return Err(ForthError::StackUnderflow);
         }
-        let index = self.loop_stack.get(self.loop_stack.depth() - 1)
+        let index = self.loop_stack.get(self.loop_stack.depth() - 2)
             .ok_or(ForthError::StackUnderflow)?;
         self.data_stack.push(index);
+        Ok(())
+    }
+
+    fn op_unloop(&mut self) -> Result<(), ForthError> {
+        // UNLOOP ( -- )
+        // Discard the loop control parameters from the loop stack
+        // Loop stack has [index, limit], so pop both
+        if self.loop_stack.depth() < 2 {
+            return Err(ForthError::StackUnderflow);
+        }
+        self.loop_stack.pop()?; // Pop limit
+        self.loop_stack.pop()?; // Pop index
         Ok(())
     }
 
