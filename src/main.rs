@@ -182,17 +182,17 @@ fn load_file(executor: &mut Executor, file_path: &str) -> std::result::Result<()
     let contents = fs::read_to_string(file_path)
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
-    // Manually handle INCLUDE statements by preprocessing (before uppercasing)
+    // Manually handle INCLUDE statements by preprocessing
     let processed = preprocess_includes(&contents, file_path)?;
 
-    // Convert to uppercase for case-insensitive word matching
-    let processed_upper = processed.to_uppercase();
+    // Note: Case-insensitive matching is handled by the lexer for keywords
+    // Don't uppercase here to preserve string literal case
 
     // Set input buffer for WORD primitive
-    executor.vm_mut().set_input(&processed_upper);
+    executor.vm_mut().set_input(&processed);
 
     // Process the file
-    let mut lexer = Lexer::new(&processed_upper);
+    let mut lexer = Lexer::new(&processed);
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
 
     let mut parser = Parser::new(tokens);
@@ -254,14 +254,14 @@ fn preprocess_includes(contents: &str, base_path: &str) -> std::result::Result<S
 }
 
 fn process_input(executor: &mut Executor, input: &str) -> std::result::Result<(), String> {
-    // Convert to uppercase for case-insensitive word matching
-    let input = input.to_uppercase();
+    // Note: Case-insensitive matching is handled by the lexer for keywords
+    // Don't uppercase here to preserve string literal case
 
     // Set input buffer for WORD primitive
-    executor.vm_mut().set_input(&input);
+    executor.vm_mut().set_input(input);
 
     // Tokenize
-    let mut lexer = Lexer::new(&input);
+    let mut lexer = Lexer::new(input);
     let tokens = lexer.tokenize().map_err(|e| e.to_string())?;
 
     // Parse

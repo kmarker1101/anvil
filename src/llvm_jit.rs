@@ -21,10 +21,15 @@ use std::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::compiler::Instruction;
 use crate::primitives::Primitive;
+use crate::llvm_primitives::*;
+use crate::execute_helper::forth_execute;
 
 // Global pointer to Compiler for LLVM primitives to access immediate_words
 // This is set by the Executor and read by LLVM-compiled code
 static GLOBAL_COMPILER_PTR: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+// Global pointer to LLVMCompiler for LLVM code generation primitives
+static GLOBAL_LLVM_COMPILER_PTR: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 pub fn set_global_compiler(compiler_ptr: *mut std::ffi::c_void) {
     GLOBAL_COMPILER_PTR.store(compiler_ptr, Ordering::Release);
@@ -32,6 +37,41 @@ pub fn set_global_compiler(compiler_ptr: *mut std::ffi::c_void) {
 
 pub fn get_global_compiler() -> *mut std::ffi::c_void {
     GLOBAL_COMPILER_PTR.load(Ordering::Acquire)
+}
+
+pub fn set_global_llvm_compiler(llvm_compiler_ptr: *mut std::ffi::c_void) {
+    GLOBAL_LLVM_COMPILER_PTR.store(llvm_compiler_ptr, Ordering::Release);
+}
+
+pub fn get_global_llvm_compiler() -> *mut std::ffi::c_void {
+    GLOBAL_LLVM_COMPILER_PTR.load(Ordering::Acquire)
+}
+
+// Global executor pointer for EXECUTE primitive
+static GLOBAL_EXECUTOR_PTR: AtomicPtr<std::ffi::c_void> = AtomicPtr::new(std::ptr::null_mut());
+
+pub fn set_global_executor(executor_ptr: *mut std::ffi::c_void) {
+    GLOBAL_EXECUTOR_PTR.store(executor_ptr, Ordering::Release);
+}
+
+pub fn get_global_executor() -> *mut std::ffi::c_void {
+    GLOBAL_EXECUTOR_PTR.load(Ordering::Acquire)
+}
+
+// Global storage for last found word (for EXECUTE)
+use std::sync::Mutex;
+static LAST_FOUND_WORD: Mutex<Option<String>> = Mutex::new(None);
+
+pub fn set_last_found_word(word: String) {
+    *LAST_FOUND_WORD.lock().unwrap() = Some(word);
+}
+
+pub fn get_last_found_word() -> Option<String> {
+    LAST_FOUND_WORD.lock().unwrap().clone()
+}
+
+pub fn clear_last_found_word() {
+    *LAST_FOUND_WORD.lock().unwrap() = None;
 }
 
 /// Macro to map Primitive enum variants to their extern "C" function names
@@ -113,6 +153,18 @@ llvm_primitive_mappings! {
     FindWord => forth_find_word,
     Execute => forth_execute,
     IsImmediate => forth_is_immediate,
+    LlvmBeginFunction => forth_llvm_begin_function,
+    LlvmEndFunction => forth_llvm_end_function,
+    LlvmEmitCall => forth_llvm_emit_call,
+    LlvmEmitLiteral => forth_llvm_emit_literal,
+    LlvmCreateLabel => forth_llvm_create_label,
+    LlvmEmitBranchIfZero => forth_llvm_emit_branch_if_zero,
+    LlvmPositionAtLabel => forth_llvm_position_at_label,
+    LlvmEmitBranch => forth_llvm_emit_branch,
+    LlvmShowModule => forth_llvm_show_module,
+    LlvmRegisterWord => forth_llvm_register_word,
+    StoreFoundWord => forth_store_found_word,
+    LookupPrimitive => forth_lookup_primitive,
 }
 
 /// Compiled function signature:
@@ -124,23 +176,29 @@ llvm_primitive_mappings! {
 type ForthFunction = unsafe extern "C" fn(*mut i64, *mut usize, *mut i64, *mut usize, *mut i64, *mut usize, *mut u8, *mut usize, *mut bool);
 
 pub struct LLVMCompiler<'ctx> {
-    context: &'ctx Context,
-    module: Module<'ctx>,
-    builder: Builder<'ctx>,
-    execution_engine: Option<ExecutionEngine<'ctx>>,
+    pub context: &'ctx Context,
+    pub module: Module<'ctx>,
+    pub builder: Builder<'ctx>,
+    pub execution_engine: Option<ExecutionEngine<'ctx>>,
 
     // Function registry
-    functions: HashMap<String, FunctionValue<'ctx>>,
+    pub functions: HashMap<String, FunctionValue<'ctx>>,
 
     // Primitive function declarations
-    primitive_funcs: HashMap<Primitive, FunctionValue<'ctx>>,
+    pub primitive_funcs: HashMap<Primitive, FunctionValue<'ctx>>,
 
     // Temporary execution engines for immediate code (kept alive to preserve machine code)
-    temp_engines: Vec<ExecutionEngine<'ctx>>,
+    pub temp_engines: Vec<ExecutionEngine<'ctx>>,
 
     // Variable allocation tracking
-    variable_offsets: HashMap<String, i64>,
-    next_variable_offset: i64,
+    pub variable_offsets: HashMap<String, i64>,
+    pub next_variable_offset: i64,
+
+    // Current function being compiled (for Forth-level code generation)
+    pub current_function: Option<FunctionValue<'ctx>>,
+
+    // User-defined words (for Forth compiler to access)
+    pub user_words: HashMap<String, FunctionValue<'ctx>>,
 }
 
 impl<'ctx> LLVMCompiler<'ctx> {
@@ -166,6 +224,8 @@ impl<'ctx> LLVMCompiler<'ctx> {
             temp_engines: Vec::new(),
             variable_offsets: HashMap::new(),
             next_variable_offset: 0,
+            current_function: None,
+            user_words: HashMap::new(),
         })
     }
 
@@ -201,6 +261,8 @@ impl<'ctx> LLVMCompiler<'ctx> {
             temp_engines: Vec::new(),
             variable_offsets: HashMap::new(),
             next_variable_offset: 0,
+            current_function: None,
+            user_words: HashMap::new(),
         })
     }
 
@@ -964,6 +1026,16 @@ unsafe fn stack_peek(stack_ptr: *mut i64, len_ptr: *mut usize, offset: usize) ->
 }
 
 // Stack operations
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_literal(
+    data_stack: *mut i64, data_len: *mut usize,
+    value: i64,
+) {
+    unsafe {
+        stack_push(data_stack, data_len, value);
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn forth_dup(
     data_stack: *mut i64, data_len: *mut usize,
@@ -1817,17 +1889,77 @@ pub extern "C" fn forth_find_word(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn forth_execute(
+pub extern "C" fn forth_store_found_word(
     data_stack: *mut i64, data_len: *mut usize,
     _return_stack: *mut i64, _return_len: *mut usize,
     _loop_stack: *mut i64, _loop_len: *mut usize,
-    _memory: *mut u8, _here: *mut usize,
+    memory: *mut u8, _here: *mut usize,
 ) {
     unsafe {
-        // EXECUTE ( xt -- )
-        // TODO: Execute the word at xt
-        let _xt = stack_pop(data_stack, data_len);
-        // Placeholder
+        // STORE-FOUND-WORD ( addr len -- )
+        let len = match stack_pop(data_stack, data_len) {
+            Some(l) => l as usize,
+            None => return,
+        };
+        let addr = match stack_pop(data_stack, data_len) {
+            Some(a) => a as usize,
+            None => return,
+        };
+
+        let slice = std::slice::from_raw_parts(memory.add(addr), len);
+        if let Ok(word) = std::str::from_utf8(slice) {
+            set_last_found_word(word.to_string());
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn forth_lookup_primitive(
+    data_stack: *mut i64, data_len: *mut usize,
+    _return_stack: *mut i64, _return_len: *mut usize,
+    _loop_stack: *mut i64, _loop_len: *mut usize,
+    memory: *mut u8, _here: *mut usize,
+) {
+    unsafe {
+        // LOOKUP-PRIMITIVE ( name-addr name-len -- prim-id )
+        // Returns primitive ID (0-N) or -1 if not a primitive
+        let len = match stack_pop(data_stack, data_len) {
+            Some(l) => l as usize,
+            None => {
+                stack_push(data_stack, data_len, -1);
+                return;
+            }
+        };
+        let addr = match stack_pop(data_stack, data_len) {
+            Some(a) => a as usize,
+            None => {
+                stack_push(data_stack, data_len, -1);
+                return;
+            }
+        };
+
+        // Get string from memory
+        let slice = std::slice::from_raw_parts(memory.add(addr), len);
+        let word = match std::str::from_utf8(slice) {
+            Ok(w) => w,
+            Err(_) => {
+                stack_push(data_stack, data_len, -1);
+                return;
+            }
+        };
+
+        // Search through all primitives
+        let primitives = Primitive::all();
+        for (idx, (prim_name, _prim)) in primitives.iter().enumerate() {
+            if prim_name.eq_ignore_ascii_case(word) {
+                // Found it! Return the index as the primitive ID
+                stack_push(data_stack, data_len, idx as i64);
+                return;
+            }
+        }
+
+        // Not found - return -1
+        stack_push(data_stack, data_len, -1);
     }
 }
 

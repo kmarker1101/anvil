@@ -113,6 +113,53 @@ impl Default for Compiler {
 }
 
 impl Compiler {
+    /// Bootstrap words that must NEVER be JIT-compiled
+    /// These are core meta-compiler words that must run interpreted in the VM
+    const BOOTSTRAP_WORDS: &[&str] = &[
+        // Core stack operations
+        "DUP", "DROP", "SWAP", "OVER", "ROT", "NIP", "TUCK", "2DUP", "2DROP", "2SWAP", "2OVER",
+        "?DUP", "PICK", "ROLL", "DEPTH",
+        // Return stack operations
+        ">R", "R>", "R@", "2>R", "2R>", "2R@",
+        // Memory operations
+        "@", "!", "C@", "C!", "+!", "ALLOT", "HERE", "DICT-HERE", ",", "C,",
+        // Comparison operations
+        "=", "<>", "<", ">", "<=", ">=", "0=", "0<>", "0<", "0>",
+        // Logic operations
+        "AND", "OR", "XOR", "INVERT",
+        // Control flow (critical - these MUST run interpreted)
+        "IF", "ELSE", "THEN", "BEGIN", "WHILE", "REPEAT", "UNTIL", "DO", "LOOP", "+LOOP", "?DO",
+        "EXIT", "RECURSE",
+        // String operations
+        "/STRING", "COUNT", "TYPE",
+        // I/O operations (needed for debug output)
+        ".", "EMIT", "CR", ".\"", ".(", ".S",
+        // Meta-compiler words (parser.fth)
+        "TOKENIZE", "GET-TOKEN-TYPE", "GET-TOKEN-DATA", "GET-TOKEN-LENGTH",
+        "ADVANCE-TOKEN", "PEEK-TOKEN-TYPE", "CURRENT-TOKEN", "TOKEN-COUNT",
+        "PARSE-PROGRAM", "PARSE-WORD-DEF", "PARSE-WORD-CALL", "PARSE-NUMBER",
+        "PARSE-STRING", "PARSE-EXPRESSION", "FIND-WORD", "CREATE-WORD",
+        "EMIT-OP", "EMIT-CELL", "EMIT-LITERAL", "EMIT-PRIMITIVE", "EMIT-CALL",
+        "EMIT-RETURN", "EMIT-BRANCH-IF-ZERO", "EMIT-BRANCH", "EMIT-VARIABLE-ADDR",
+        "LOOKUP-PRIMITIVE", "LAST-BYTECODE-ADDR", "LAST-BYTECODE-LEN",
+        "STORE-FOUND-WORD",
+        // Code generator words (codegen.fth)
+        "CODEGEN-WORD", "PROCESS-BYTECODE", "PROCESS-INSTRUCTION",
+        "NEXT-LABEL", "LABEL-COUNTER", "HIT-RETURN",
+        // LLVM wrapper primitives (must call Rust, not JIT)
+        "LLVM-BEGIN-FUNCTION", "LLVM-END-FUNCTION", "LLVM-EMIT-LITERAL",
+        "LLVM-EMIT-CALL", "LLVM-SHOW-MODULE", "LLVM-REGISTER-WORD",
+        // Dictionary management
+        "LATEST", "DICT-START",
+        // Test/debug words
+        "SHOW-IR",
+    ];
+
+    /// Check if a word is a bootstrap word that must never be JIT-compiled
+    pub fn is_bootstrap_word(&self, name: &str) -> bool {
+        Self::BOOTSTRAP_WORDS.iter().any(|&w| w.eq_ignore_ascii_case(name))
+    }
+
     pub fn new() -> Self {
         let mut compiler = Compiler {
             dictionary: HashMap::new(),
@@ -156,6 +203,31 @@ impl Compiler {
     /// Get last defined word name
     pub fn get_last_defined_word(&self) -> Option<&str> {
         self.last_defined_word.as_deref()
+    }
+
+    /// Register a word that was compiled directly to LLVM (from Forth compiler)
+    /// The word has no bytecode instructions, it's already in the LLVM module
+    pub fn add_word_compiled(&mut self, name: &str) {
+        eprintln!("add_word_compiled ENTRY: name={}", name);
+        // Add to dictionary with empty instructions
+        // When called, the Executor will look it up in LLVM
+        self.dictionary.insert(
+            name.to_string(),
+            CompiledWord {
+                name: name.to_string(),
+                instructions: vec![], // Empty - already in LLVM
+            },
+        );
+        eprintln!("add_word_compiled: inserted '{}', dict now has {} entries", name, self.dictionary.len());
+        self.last_defined_word = Some(name.to_string());
+        eprintln!("add_word_compiled EXIT");
+    }
+
+    /// Check if a word exists in the dictionary
+    pub fn has_word(&self, name: &str) -> bool {
+        let result = self.dictionary.contains_key(name);
+        eprintln!("DEBUG has_word('{}') = {} (dict has {} entries)", name, result, self.dictionary.len());
+        result
     }
 
     fn install_primitives(&mut self) {
@@ -601,6 +673,14 @@ impl Executor {
 
         // Also set global compiler pointer for LLVM functions
         crate::llvm_jit::set_global_compiler(compiler_ptr);
+
+        // Set global LLVM compiler pointer for code generation primitives
+        let llvm_compiler_ptr = &mut self.llvm_compiler as *mut _ as *mut std::ffi::c_void;
+        crate::llvm_jit::set_global_llvm_compiler(llvm_compiler_ptr);
+
+        // Set global executor pointer for EXECUTE primitive
+        let executor_ptr = self as *mut _ as *mut std::ffi::c_void;
+        crate::llvm_jit::set_global_executor(executor_ptr);
     }
 
     /// Create a new executor with the standard library loaded
@@ -768,23 +848,56 @@ impl Executor {
 
     /// Execute a specific word
     pub fn execute_word(&mut self, name: &str) -> Result<(), String> {
+        eprintln!("execute_word ENTRY: name='{}'", name);
+
         // Make sure the word exists in the compiler and get its instructions
         let instructions = {
+            eprintln!("execute_word: Looking up '{}' in compiler dictionary", name);
             let word = self
                 .compiler
                 .get_word(name)
-                .ok_or_else(|| format!("Word not found: {}", name))?;
+                .ok_or_else(|| {
+                    eprintln!("execute_word: Word '{}' NOT FOUND in compiler dictionary", name);
+                    format!("Word not found: {}", name)
+                })?;
+            eprintln!("execute_word: Found '{}', instructions.len()={}", name, word.instructions.len());
             word.instructions.clone()
         };
 
-        // Compile all words to LLVM (including dependencies)
-        self.compile_all_words_to_llvm()?;
+        // Check if this is a bootstrap word that must never be JIT-compiled
+        if self.compiler.is_bootstrap_word(name) {
+            eprintln!("execute_word: '{}' is a bootstrap word, executing via interpreter", name);
+            return self.execute_instructions(&instructions);
+        }
 
-        // Ensure the target word is compiled
-        self.llvm_compiler.compile_word(name, &instructions)?;
+        // Don't compile meta-compiler words to LLVM - they should run interpreted
+        // Only compile if instructions are not empty
+        // (empty instructions mean the word was compiled directly to LLVM by Forth compiler)
+        if !instructions.is_empty() {
+            // Try to compile this specific word to LLVM, but don't fail if it can't be compiled
+            let _ = self.llvm_compiler.compile_word(name, &instructions);
+        }
 
-        // Get the JIT-compiled function
-        let func = self.llvm_compiler.get_function(name)?;
+        // Try to get the JIT-compiled function
+        eprintln!("execute_word: Looking for function '{}' in LLVM", name);
+        let func = match self.llvm_compiler.get_function(name) {
+            Ok(f) => {
+                eprintln!("execute_word: Found LLVM function '{}'", name);
+                Some(f)
+            }
+            Err(_) => {
+                eprintln!("execute_word: No LLVM function for '{}', will use interpreter", name);
+                None
+            }
+        };
+
+        // If no LLVM function exists, execute via bytecode interpreter
+        if func.is_none() {
+            eprintln!("execute_word: Executing '{}' via interpreter", name);
+            return self.execute_instructions(&instructions);
+        }
+
+        let func = func.unwrap();
 
         // Prepare stacks and memory as raw arrays
         let mut data_stack = vec![0i64; 256];
@@ -938,6 +1051,11 @@ impl Executor {
     /// Get mutable reference to VM
     pub fn vm_mut(&mut self) -> &mut VM {
         &mut self.vm
+    }
+
+    /// Get pointer to the compiler (for debugging)
+    pub fn compiler_ptr(&self) -> *const Compiler {
+        &self.compiler as *const Compiler
     }
 
     /// Check if BYE was executed

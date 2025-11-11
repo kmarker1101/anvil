@@ -1129,7 +1129,7 @@ impl VM {
 
         self.loop_stack.clear();
         for i in 0..loop_len {
-            self.loop_stack.push(loop_stack[i]);
+            self.loop_stack.push(loop_stack[i])?;
         }
 
         self.here = here;
@@ -1183,7 +1183,7 @@ impl VM {
 
         self.loop_stack.clear();
         for i in 0..loop_len {
-            self.loop_stack.push(loop_stack[i]);
+            self.loop_stack.push(loop_stack[i])?;
         }
 
         self.here = here;
@@ -1237,7 +1237,7 @@ impl VM {
 
         self.loop_stack.clear();
         for i in 0..loop_len {
-            self.loop_stack.push(loop_stack[i]);
+            self.loop_stack.push(loop_stack[i])?;
         }
 
         self.here = here;
@@ -1291,7 +1291,7 @@ impl VM {
 
         self.loop_stack.clear();
         for i in 0..loop_len {
-            self.loop_stack.push(loop_stack[i]);
+            self.loop_stack.push(loop_stack[i])?;
         }
 
         self.here = here;
@@ -1345,7 +1345,7 @@ impl VM {
 
         self.loop_stack.clear();
         for i in 0..loop_len {
-            self.loop_stack.push(loop_stack[i]);
+            self.loop_stack.push(loop_stack[i])?;
         }
 
         self.here = here;
@@ -1399,7 +1399,7 @@ impl VM {
 
         self.loop_stack.clear();
         for i in 0..loop_len {
-            self.loop_stack.push(loop_stack[i]);
+            self.loop_stack.push(loop_stack[i])?;
         }
 
         self.here = here;
@@ -1453,7 +1453,7 @@ impl VM {
 
         self.loop_stack.clear();
         for i in 0..loop_len {
-            self.loop_stack.push(loop_stack[i]);
+            self.loop_stack.push(loop_stack[i])?;
         }
 
         self.here = here;
@@ -1507,7 +1507,7 @@ impl VM {
 
         self.loop_stack.clear();
         for i in 0..loop_len {
-            self.loop_stack.push(loop_stack[i]);
+            self.loop_stack.push(loop_stack[i])?;
         }
 
         self.here = here;
@@ -1561,7 +1561,7 @@ impl VM {
 
         self.loop_stack.clear();
         for i in 0..loop_len {
-            self.loop_stack.push(loop_stack[i]);
+            self.loop_stack.push(loop_stack[i])?;
         }
 
         self.here = here;
@@ -1615,7 +1615,7 @@ impl VM {
 
         self.loop_stack.clear();
         for i in 0..loop_len {
-            self.loop_stack.push(loop_stack[i]);
+            self.loop_stack.push(loop_stack[i])?;
         }
 
         self.here = here;

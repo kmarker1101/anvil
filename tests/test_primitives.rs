@@ -628,3 +628,149 @@ fn test_chars_underflow() {
     let result = vm.execute_primitive(Primitive::Chars);
     assert!(result.is_err());
 }
+
+#[test]
+fn test_lookup_primitive_fetch() {
+    let mut vm = VM::new();
+
+    // Store "@" in memory
+    let word = "@";
+    let addr = 0x1000;
+    vm.memory[addr] = b'@';
+
+    // Push addr and len
+    vm.data_stack.push(addr as i64);
+    vm.data_stack.push(1);
+
+    // Execute LOOKUP-PRIMITIVE
+    vm.execute_primitive(Primitive::LookupPrimitive).unwrap();
+
+    // Should return 0 (Fetch is the first primitive)
+    let prim_id = vm.data_stack.pop().unwrap();
+    assert_eq!(prim_id, 0);
+}
+
+#[test]
+fn test_lookup_primitive_dup() {
+    let mut vm = VM::new();
+
+    // Store "DUP" in memory
+    let word = "DUP";
+    let addr = 0x1000;
+    for (i, &byte) in word.as_bytes().iter().enumerate() {
+        vm.memory[addr + i] = byte;
+    }
+
+    // Push addr and len
+    vm.data_stack.push(addr as i64);
+    vm.data_stack.push(word.len() as i64);
+
+    // Execute LOOKUP-PRIMITIVE
+    vm.execute_primitive(Primitive::LookupPrimitive).unwrap();
+
+    // DUP should be at index 15 (count from @ at 0)
+    let prim_id = vm.data_stack.pop().unwrap();
+    assert_eq!(prim_id, 15);
+
+    // Verify by checking the primitive at that index
+    let primitives = Primitive::all();
+    assert_eq!(primitives[15].0, "DUP");
+}
+
+#[test]
+fn test_lookup_primitive_add() {
+    let mut vm = VM::new();
+
+    // Store "+" in memory
+    let addr = 0x1000;
+    vm.memory[addr] = b'+';
+
+    // Push addr and len
+    vm.data_stack.push(addr as i64);
+    vm.data_stack.push(1);
+
+    // Execute LOOKUP-PRIMITIVE
+    vm.execute_primitive(Primitive::LookupPrimitive).unwrap();
+
+    // + should be at index 23 (Add primitive)
+    let prim_id = vm.data_stack.pop().unwrap();
+    assert_eq!(prim_id, 23);
+
+    // Verify
+    let primitives = Primitive::all();
+    assert_eq!(primitives[23].0, "+");
+}
+
+#[test]
+fn test_lookup_primitive_case_insensitive() {
+    let mut vm = VM::new();
+
+    // Store "dup" (lowercase) in memory
+    let word = "dup";
+    let addr = 0x1000;
+    for (i, &byte) in word.as_bytes().iter().enumerate() {
+        vm.memory[addr + i] = byte;
+    }
+
+    // Push addr and len
+    vm.data_stack.push(addr as i64);
+    vm.data_stack.push(word.len() as i64);
+
+    // Execute LOOKUP-PRIMITIVE
+    vm.execute_primitive(Primitive::LookupPrimitive).unwrap();
+
+    // Should still find DUP (case-insensitive)
+    let prim_id = vm.data_stack.pop().unwrap();
+    assert_eq!(prim_id, 15);
+}
+
+#[test]
+fn test_lookup_primitive_not_found() {
+    let mut vm = VM::new();
+
+    // Store "NOTAPRIMITIVE" in memory
+    let word = "NOTAPRIMITIVE";
+    let addr = 0x1000;
+    for (i, &byte) in word.as_bytes().iter().enumerate() {
+        vm.memory[addr + i] = byte;
+    }
+
+    // Push addr and len
+    vm.data_stack.push(addr as i64);
+    vm.data_stack.push(word.len() as i64);
+
+    // Execute LOOKUP-PRIMITIVE
+    vm.execute_primitive(Primitive::LookupPrimitive).unwrap();
+
+    // Should return -1 (not found)
+    let prim_id = vm.data_stack.pop().unwrap();
+    assert_eq!(prim_id, -1);
+}
+
+#[test]
+fn test_lookup_primitive_empty_string() {
+    let mut vm = VM::new();
+
+    // Push addr and len=0
+    vm.data_stack.push(0x1000);
+    vm.data_stack.push(0);
+
+    // Execute LOOKUP-PRIMITIVE
+    vm.execute_primitive(Primitive::LookupPrimitive).unwrap();
+
+    // Should return -1 (not found)
+    let prim_id = vm.data_stack.pop().unwrap();
+    assert_eq!(prim_id, -1);
+}
+
+#[test]
+fn test_lookup_primitive_underflow() {
+    let mut vm = VM::new();
+
+    // Stack underflow - only push one value
+    vm.data_stack.push(0x1000);
+
+    // Should return error
+    let result = vm.execute_primitive(Primitive::LookupPrimitive);
+    assert!(result.is_err());
+}

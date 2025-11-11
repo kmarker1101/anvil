@@ -98,6 +98,12 @@
 
 : COUNT ( c-addr -- addr len ) DUP 1+ SWAP C@ ;
 : S=  ( addr1 len1 addr2 len2 -- flag ) COMPARE 0= ;
+: /STRING ( addr len n -- addr+n len-n ) ROT OVER + ROT ROT - ;
+
+\ Double-cell return stack operations
+: 2>R ( x1 x2 -- ) ( R: -- x1 x2 ) SWAP >R >R ;
+: 2R> ( -- x1 x2 ) ( R: x1 x2 -- ) R> R> SWAP ;
+: 2R@ ( -- x1 x2 ) ( R: x1 x2 -- x1 x2 ) R> R> 2DUP >R >R SWAP ;
 
 \ ============================================================================
 \ NUMERIC BASE
@@ -131,47 +137,11 @@
 \ These words control compilation and are marked IMMEDIATE
 \ They execute during compilation rather than being compiled
 
-\ [ and ] - switch compile/interpret modes
-\ : [  0 STATE ! ; IMMEDIATE
-\ : ]  1 STATE ! ;
+\ Switch compile/interpret modes
+: [  0 STATE ! ; IMMEDIATE
+: ]  -1 STATE ! ;
 
-\ Control flow compilation words
-\ These emit bytecode during compilation
-
-\ : IF  ( -- addr )
-\   OP-BRANCH-IF-ZERO EMIT-OP
-\   CODE-HERE @          \ Save location for backpatching
-\   0 EMIT-CELL          \ Placeholder
-\   >BRANCH              \ Push to branch stack
-\ ; IMMEDIATE
-
-\ : THEN  ( addr -- )
-\   BRANCH>              \ Pop saved location
-\   CODE-HERE @ SWAP !   \ Backpatch with current location
-\ ; IMMEDIATE
-
-\ : ELSE  ( addr1 -- addr2 )
-\   OP-BRANCH EMIT-OP    \ Unconditional jump
-\   CODE-HERE @          \ Save new location
-\   0 EMIT-CELL          \ Placeholder
-\   SWAP                 \ Get IF's location
-\   CODE-HERE @ SWAP !   \ Backpatch IF
-\   >BRANCH              \ Save ELSE location
-\ ; IMMEDIATE
-
-\ : BEGIN  ( -- addr )
-\   CODE-HERE @          \ Mark loop start
-\ ; IMMEDIATE
-
-\ : UNTIL  ( addr -- )
-\   OP-BRANCH-IF-ZERO EMIT-OP
-\   EMIT-CELL            \ Emit backward branch to BEGIN
-\ ; IMMEDIATE
-
-\ : LITERAL  ( n -- )
-\   EMIT-LITERAL
-\ ; IMMEDIATE
-
-\ Note: These are commented out until the meta-compiler is fully integrated
-\ For now, control flow is handled by the Rust compiler
+\ Note: The full meta-compiler (lexer.fth, parser.fth, codegen.fth)
+\ provides the complete Forth-in-Forth compiler.
+\ The Rust compiler is just for bootstrapping the system.
 

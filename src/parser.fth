@@ -55,6 +55,10 @@
 VARIABLE BYTECODE-HERE
 45000 BYTECODE-HERE !
 
+\ Last compiled word (for CODEGEN-WORD)
+VARIABLE LAST-BYTECODE-ADDR
+VARIABLE LAST-BYTECODE-LEN
+
 \ Branch stack (for backpatching control flow)
 : BRANCH-STACK-BASE 55000 ;
 VARIABLE BRANCH-SP
@@ -158,6 +162,7 @@ VARIABLE CURRENT-WORD-ADDR   \ Code address of word being compiled (for RECURSE)
 
 \ Emit a primitive call
 : EMIT-PRIMITIVE ( prim-id -- )
+  ." [EMIT-PRIM: id=" DUP . ." at=" BYTECODE-HERE @ . ." ]" CR
   OP-PRIMITIVE SWAP EMIT-INSTRUCTION
 ;
 
@@ -214,13 +219,14 @@ VARIABLE CURRENT-WORD-ADDR   \ Code address of word being compiled (for RECURSE)
 
 \ Create a new dictionary entry
 : CREATE-WORD ( name-addr name-len code-addr -- )
-  DICT-HERE @ >R        \ Save dictionary pointer
+  DICT-HERE @ >R        \ Save dictionary pointer (R: dict-ptr)
   LATEST @ R@ !         \ Store link to previous word
-  8 R@ + !              \ Store name address (at +8)
-  SWAP 16 R@ + !        \ Store name length (at +16)
-  24 R@ + !             \ Store code address (at +24)
+  R@ 24 + !             \ Store code address (at +24)
+  R@ 16 + !             \ Store name length (at +16)
+  R@ 8 + !              \ Store name address (at +8)
   R@ LATEST !           \ Update LATEST
   32 DICT-HERE +!       \ Advance dictionary pointer
+  R> DROP               \ Clean up return stack
 ;
 
 \ Find a word in the dictionary
@@ -232,7 +238,9 @@ VARIABLE CURRENT-WORD-ADDR   \ Code address of word being compiled (for RECURSE)
     R@ 8 + @            \ Get entry's name address
     R@ 16 + @           \ Get entry's name length
     COMPARE 0= IF
-      2DROP R@ 24 + @ R> DROP EXIT  \ Found it - return code address
+      \ Found it - store name for EXECUTE and return code address
+      2DUP STORE-FOUND-WORD
+      2DROP R@ 24 + @ R> DROP EXIT
     THEN
     R> @                \ Follow link to next entry
   REPEAT
@@ -639,6 +647,7 @@ VARIABLE CURRENT-WORD-ADDR   \ Code address of word being compiled (for RECURSE)
   \ Save current bytecode position as word's code address
   BYTECODE-HERE @
   DUP CURRENT-WORD-ADDR !          \ Save for RECURSE
+  >R                               \ Save start addr on return stack
 
   ADVANCE-TOKEN                    \ Consume name
 
@@ -654,7 +663,15 @@ VARIABLE CURRENT-WORD-ADDR   \ Code address of word being compiled (for RECURSE)
 
   ADVANCE-TOKEN                    \ Consume ;
 
-  \ Create dictionary entry
+  \ Get bytecode range: start-addr and length
+  R>                               \ Get start addr
+  BYTECODE-HERE @ OVER -           \ Calculate length (end - start)
+
+  \ Store last compiled word info for CODEGEN-WORD
+  2DUP LAST-BYTECODE-LEN ! LAST-BYTECODE-ADDR !
+
+  \ Create dictionary entry (stack: name-addr name-len code-addr)
+  DROP                             \ Drop length, keep start addr for dictionary
   CREATE-WORD
 
   \ Clear current word address
