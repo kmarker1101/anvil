@@ -22,6 +22,53 @@ pub const INPUT_BUFFER_SIZE: usize = 1024;
 /// Memory address for WORD's transient buffer (counted string output)
 pub const WORD_BUFFER_ADDR: usize = 0x600;
 
+/// Memory address for the LATEST variable (pointer to most recent dictionary entry)
+pub const LATEST_ADDR: usize = 0x110;
+
+/// Memory address for the DP (Dictionary Pointer) variable
+pub const DP_ADDR: usize = 0x118;
+
+/// Memory address for the STATE variable (0 = interpret, 1 = compile)
+pub const STATE_ADDR: usize = 0x120;
+
+/// Dictionary starts here (after system variables)
+pub const DICTIONARY_START: usize = 0x800;
+
+// ============================================================================
+// DICTIONARY STRUCTURE
+// ============================================================================
+// Each dictionary entry in memory:
+// | LINK (8 bytes) | FLAGS (8 bytes) | NAME-LEN (1 byte) | NAME (n bytes) | CODE-ADDR (8 bytes) | CODE... |
+//
+// LINK:      Pointer to previous word (0 if no previous)
+// FLAGS:     Bit 0 = IMMEDIATE, Bit 1 = HIDDEN
+// NAME-LEN:  Length of name
+// NAME:      Name characters
+// CODE-ADDR: Bytecode address where this word's code starts
+
+pub const F_IMMEDIATE: i64 = 1;
+pub const F_HIDDEN: i64 = 2;
+
+// ============================================================================
+// BYTECODE OPCODES (for memory-based bytecode)
+// ============================================================================
+// Each instruction stored as: [OPCODE (1 byte)] [DATA (variable bytes)]
+
+pub const OP_PRIMITIVE: u8 = 0x01;      // + prim_id (1 byte)
+pub const OP_LITERAL: u8 = 0x02;        // + value (8 bytes)
+pub const OP_JUMP: u8 = 0x03;           // + addr (8 bytes)
+pub const OP_BRANCH0: u8 = 0x04;        // + addr (8 bytes) - JumpIfZero
+pub const OP_BRANCHNZ: u8 = 0x05;       // + addr (8 bytes) - JumpIfNotZero
+pub const OP_CALL: u8 = 0x06;           // + addr (8 bytes)
+pub const OP_RETURN: u8 = 0x07;         // no data
+pub const OP_PUSHVAR: u8 = 0x08;        // + offset (8 bytes)
+pub const OP_PUSHCONST: u8 = 0x09;      // + value (8 bytes)
+pub const OP_DO_SETUP: u8 = 0x0A;       // no data
+pub const OP_QDO_SETUP: u8 = 0x0B;      // + addr (8 bytes)
+pub const OP_LOOP_CHECK: u8 = 0x0C;     // + addr (8 bytes)
+pub const OP_PLOOP_CHECK: u8 = 0x0D;    // + addr (8 bytes)
+pub const OP_LOOP_END: u8 = 0x0E;       // no data
+
 // ============================================================================
 // STACK IMPLEMENTATIONS
 // ============================================================================
@@ -231,6 +278,23 @@ macro_rules! define_primitives {
                     )*
                 ]
             }
+
+            /// Get the numeric ID of this primitive (for bytecode serialization)
+            /// IDs are assigned based on declaration order
+            pub fn id(&self) -> u8 {
+                // Get position in all() array
+                for (idx, (_name, prim)) in Self::all().iter().enumerate() {
+                    if prim == self {
+                        return idx as u8;
+                    }
+                }
+                0 // Should never happen
+            }
+
+            /// Get a primitive by its numeric ID
+            pub fn from_id(id: u8) -> Option<Primitive> {
+                Self::all().get(id as usize).map(|(_name, prim)| *prim)
+            }
         }
 
         // Generate the execute_primitive dispatcher for VM
@@ -254,6 +318,13 @@ define_primitives! {
     CFetch => "C@": "C@ ( addr -- c ) Fetch byte from memory" => op_c_fetch,
     CStore => "C!": "C! ( c addr -- ) Store byte to memory" => op_c_store,
     Here => "HERE": "HERE ( -- addr ) Get dictionary pointer" => op_here,
+    Comma => ",": ", ( n -- ) Compile cell into dictionary at HERE" => op_comma,
+    CComma => "C,": "C, ( c -- ) Compile byte into dictionary at HERE" => op_c_comma,
+    Allot => "ALLOT": "ALLOT ( n -- ) Allocate n bytes in dictionary" => op_allot,
+    Aligned => "ALIGNED": "ALIGNED ( addr -- addr' ) Align address to cell boundary" => op_aligned,
+    StateAddr => "STATE": "STATE ( -- a-addr ) Address of compilation state variable" => op_state_addr,
+    LatestAddr => "LATEST": "LATEST ( -- a-addr ) Address of latest word pointer" => op_latest_addr,
+    DpAddr => "DP": "DP ( -- a-addr ) Address of dictionary pointer" => op_dp_addr,
     CharPlus => "CHAR+": "CHAR+ ( c-addr1 -- c-addr2 ) Add character size to address" => op_char_plus,
     Chars => "CHARS": "CHARS ( n1 -- n2 ) Size in address units of n1 characters" => op_chars,
     Base => "BASE": "BASE ( -- a-addr ) Address of cell containing current number-conversion radix" => op_base,
@@ -305,8 +376,28 @@ define_primitives! {
     I => "I": "I ( -- n ) Get current loop index" => op_i,
     Unloop => "UNLOOP": "UNLOOP ( -- ) Discard loop control parameters" => op_unloop,
 
+    // Dictionary and execution
+    Create => "CREATE": "CREATE ( c-addr u -- ) Create dictionary header" => op_create,
+    Find => "FIND": "FIND ( c-addr -- c-addr 0 | xt 1 | xt -1 ) Find word in dictionary" => op_find,
+    Execute => "EXECUTE": "EXECUTE ( xt -- ) Execute execution token" => op_execute,
+
+    // Bytecode compilation primitives
+    CompilePrimitive => "COMPILE-PRIM": "COMPILE-PRIM ( prim-id -- ) Compile primitive bytecode" => op_compile_primitive,
+    CompileLiteral => "COMPILE-LIT": "COMPILE-LIT ( n -- ) Compile literal bytecode" => op_compile_literal,
+    CompileCall => "COMPILE-CALL": "COMPILE-CALL ( addr -- ) Compile call bytecode" => op_compile_call,
+    CompileReturn => "COMPILE-RETURN": "COMPILE-RETURN ( -- ) Compile return bytecode" => op_compile_return,
+    CompileBranch0 => "COMPILE-BRANCH0": "COMPILE-BRANCH0 ( addr -- ) Compile branch-if-zero bytecode" => op_compile_branch0,
+    CompileBranchNZ => "COMPILE-BRANCHNZ": "COMPILE-BRANCHNZ ( addr -- ) Compile branch-if-not-zero bytecode" => op_compile_branchnz,
+    CompileJump => "COMPILE-JUMP": "COMPILE-JUMP ( addr -- ) Compile unconditional jump bytecode" => op_compile_jump,
+    CompileDoSetup => "COMPILE-DO-SETUP": "COMPILE-DO-SETUP ( -- ) Compile DO setup bytecode" => op_compile_do_setup,
+    CompileLoopCheck => "COMPILE-LOOP-CHECK": "COMPILE-LOOP-CHECK ( addr -- ) Compile LOOP check bytecode" => op_compile_loop_check,
+    CompileLoopEnd => "COMPILE-LOOP-END": "COMPILE-LOOP-END ( -- ) Compile LOOP end bytecode" => op_compile_loop_end,
+
     // Stack inspection
     Depth => "DEPTH": "DEPTH ( -- n ) Get number of items on data stack" => op_depth,
+
+    // Dictionary manipulation
+    Immediate => "IMMEDIATE": "IMMEDIATE ( -- ) Mark last word as immediate" => op_immediate,
 }
 
 // ============================================================================
@@ -320,6 +411,7 @@ pub struct VM {
     pub loop_stack: Stack, // For DO/LOOP: stores current index and limit
     pub here: usize,       // Dictionary pointer for string allocation
     pub input_length: usize, // Length of current input in buffer
+    pub pending_execute: Option<usize>, // Address to execute (set by EXECUTE primitive)
 }
 
 impl Default for VM {
@@ -337,6 +429,7 @@ impl VM {
             loop_stack: Stack::new(),
             here: 0x4000, // Start string allocation at 16KB
             input_length: 0,
+            pending_execute: None,
         };
 
         // Initialize BASE to 10 (decimal)
@@ -347,7 +440,79 @@ impl VM {
         let to_in_bytes = 0i64.to_le_bytes();
         vm.memory[TO_IN_ADDR..TO_IN_ADDR + 8].copy_from_slice(&to_in_bytes);
 
+        // Initialize LATEST to 0 (no words yet)
+        let latest_bytes = 0i64.to_le_bytes();
+        vm.memory[LATEST_ADDR..LATEST_ADDR + 8].copy_from_slice(&latest_bytes);
+
+        // Initialize DP (Dictionary Pointer) to start of dictionary
+        let dp_bytes = (DICTIONARY_START as i64).to_le_bytes();
+        vm.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&dp_bytes);
+
+        // Initialize STATE to 0 (interpret mode)
+        let state_bytes = 0i64.to_le_bytes();
+        vm.memory[STATE_ADDR..STATE_ADDR + 8].copy_from_slice(&state_bytes);
+
+        // Pre-populate dictionary with all primitives
+        vm.populate_primitives();
+
         vm
+    }
+
+    /// Populate the memory-based dictionary with all primitive operations
+    fn populate_primitives(&mut self) {
+        for (name, prim) in Primitive::all() {
+            let name_bytes = name.as_bytes();
+
+            // Get current DP
+            let mut dp_bytes = [0u8; 8];
+            dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+            let mut dp = i64::from_le_bytes(dp_bytes) as usize;
+            let entry_start = dp;
+
+            // Write LINK field (previous LATEST value)
+            let mut latest_bytes = [0u8; 8];
+            latest_bytes.copy_from_slice(&self.memory[LATEST_ADDR..LATEST_ADDR + 8]);
+            self.memory[dp..dp + 8].copy_from_slice(&latest_bytes);
+            dp += 8;
+
+            // Write FLAGS field (0 for primitives)
+            let flags_bytes = 0i64.to_le_bytes();
+            self.memory[dp..dp + 8].copy_from_slice(&flags_bytes);
+            dp += 8;
+
+            // Write NAME-LEN field
+            self.memory[dp] = name_bytes.len() as u8;
+            dp += 1;
+
+            // Write NAME field
+            self.memory[dp..dp + name_bytes.len()].copy_from_slice(name_bytes);
+            dp += name_bytes.len();
+
+            // Align to 8-byte boundary before CODE-ADDR
+            dp = (dp + 7) & !7;
+
+            // Write CODE-ADDR field (points to bytecode)
+            let code_addr = dp + 8;
+            let code_addr_bytes = (code_addr as i64).to_le_bytes();
+            self.memory[dp..dp + 8].copy_from_slice(&code_addr_bytes);
+            dp += 8;
+
+            // Write bytecode: OP_PRIMITIVE + prim_id + OP_RETURN
+            self.memory[dp] = OP_PRIMITIVE;
+            dp += 1;
+            self.memory[dp] = prim.id();
+            dp += 1;
+            self.memory[dp] = OP_RETURN;
+            dp += 1;
+
+            // Update DP
+            let new_dp_bytes = (dp as i64).to_le_bytes();
+            self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp_bytes);
+
+            // Update LATEST to point to this new word
+            let new_latest_bytes = (entry_start as i64).to_le_bytes();
+            self.memory[LATEST_ADDR..LATEST_ADDR + 8].copy_from_slice(&new_latest_bytes);
+        }
     }
 
     /// Set the input buffer for parsing (used by WORD, etc.)
@@ -965,6 +1130,504 @@ impl VM {
         // Push the number of items on the data stack
         let depth = self.data_stack.depth() as i64;
         self.data_stack.push(depth);
+        Ok(())
+    }
+
+    fn op_immediate(&mut self) -> Result<(), ForthError> {
+        // IMMEDIATE ( -- )
+        // Mark the most recently defined word as IMMEDIATE
+        // Get LATEST
+        let mut latest_bytes = [0u8; 8];
+        latest_bytes.copy_from_slice(&self.memory[LATEST_ADDR..LATEST_ADDR + 8]);
+        let latest = i64::from_le_bytes(latest_bytes) as usize;
+
+        if latest == 0 {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+
+        // FLAGS field is at offset 8 from word start (after LINK)
+        let flags_addr = latest + 8;
+
+        // Read current flags
+        let mut flags_bytes = [0u8; 8];
+        flags_bytes.copy_from_slice(&self.memory[flags_addr..flags_addr + 8]);
+        let mut flags = i64::from_le_bytes(flags_bytes);
+
+        // Set IMMEDIATE bit (bit 0)
+        flags |= F_IMMEDIATE;
+
+        // Write back
+        self.memory[flags_addr..flags_addr + 8].copy_from_slice(&flags.to_le_bytes());
+
+        Ok(())
+    }
+
+    fn op_comma(&mut self) -> Result<(), ForthError> {
+        // , ( n -- )
+        // Compile a cell (8 bytes) into dictionary at HERE, then advance HERE
+        let value = self.data_stack.pop()?;
+        let here = self.here;
+
+        if here + 8 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+
+        // Store as little-endian bytes
+        self.memory[here..here + 8].copy_from_slice(&value.to_le_bytes());
+        self.here += 8;
+        Ok(())
+    }
+
+    fn op_c_comma(&mut self) -> Result<(), ForthError> {
+        // C, ( c -- )
+        // Compile a byte into dictionary at HERE, then advance HERE
+        let value = self.data_stack.pop()?;
+        let here = self.here;
+
+        if here >= self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+
+        self.memory[here] = value as u8;
+        self.here += 1;
+        Ok(())
+    }
+
+    fn op_allot(&mut self) -> Result<(), ForthError> {
+        // ALLOT ( n -- )
+        // Allocate n bytes in dictionary by advancing DP
+        let n = self.data_stack.pop()? as usize;
+
+        // Get current DP
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let dp = i64::from_le_bytes(dp_bytes) as usize;
+
+        // Advance DP by n bytes
+        let new_dp = dp + n;
+        if new_dp > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+
+        let new_dp_bytes = (new_dp as i64).to_le_bytes();
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp_bytes);
+
+        Ok(())
+    }
+
+    fn op_aligned(&mut self) -> Result<(), ForthError> {
+        // ALIGNED ( addr -- addr' )
+        // Align address to 8-byte boundary
+        let addr = self.data_stack.pop()? as usize;
+        let aligned = (addr + 7) & !7;
+        self.data_stack.push(aligned as i64);
+        Ok(())
+    }
+
+    fn op_state_addr(&mut self) -> Result<(), ForthError> {
+        // STATE ( -- a-addr )
+        // Push address of STATE variable
+        self.data_stack.push(STATE_ADDR as i64);
+        Ok(())
+    }
+
+    fn op_latest_addr(&mut self) -> Result<(), ForthError> {
+        // LATEST ( -- a-addr )
+        // Push address of LATEST variable
+        self.data_stack.push(LATEST_ADDR as i64);
+        Ok(())
+    }
+
+    fn op_dp_addr(&mut self) -> Result<(), ForthError> {
+        // DP ( -- a-addr )
+        // Push address of DP (dictionary pointer) variable
+        self.data_stack.push(DP_ADDR as i64);
+        Ok(())
+    }
+
+    fn op_create(&mut self) -> Result<(), ForthError> {
+        // CREATE ( c-addr u -- )
+        // Create a dictionary entry header in memory
+        let len = self.data_stack.pop()? as usize;
+        let name_addr = self.data_stack.pop()? as usize;
+
+        // Get current DP (Dictionary Pointer)
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let mut dp = i64::from_le_bytes(dp_bytes) as usize;
+        let entry_start = dp; // Save start of entry for LATEST
+
+        // Get current LATEST
+        let mut latest_bytes = [0u8; 8];
+        latest_bytes.copy_from_slice(&self.memory[LATEST_ADDR..LATEST_ADDR + 8]);
+        let latest = i64::from_le_bytes(latest_bytes) as usize;
+
+        // Write LINK field (8 bytes) - points to previous word
+        let link_bytes = (latest as i64).to_le_bytes();
+        self.memory[dp..dp + 8].copy_from_slice(&link_bytes);
+        dp += 8;
+
+        // Write FLAGS field (8 bytes) - initially 0
+        let flags_bytes = 0i64.to_le_bytes();
+        self.memory[dp..dp + 8].copy_from_slice(&flags_bytes);
+        dp += 8;
+
+        // Write NAME-LEN field (1 byte)
+        self.memory[dp] = len as u8;
+        dp += 1;
+
+        // Write NAME field (len bytes)
+        if name_addr + len > self.memory.len() || dp + len > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        self.memory.copy_within(name_addr..name_addr + len, dp);
+        dp += len;
+
+        // Align to 8-byte boundary
+        dp = (dp + 7) & !7;
+
+        // Write CODE-ADDR field (8 bytes) - points to where bytecode will start
+        let code_addr = (dp + 8) as i64;
+        let code_addr_bytes = code_addr.to_le_bytes();
+        self.memory[dp..dp + 8].copy_from_slice(&code_addr_bytes);
+        dp += 8;
+
+        // Update LATEST to point to this new word (start of entry)
+        let new_latest_bytes = (entry_start as i64).to_le_bytes();
+        self.memory[LATEST_ADDR..LATEST_ADDR + 8].copy_from_slice(&new_latest_bytes);
+
+        // Update DP to current position
+        let dp_bytes = (dp as i64).to_le_bytes();
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&dp_bytes);
+
+        Ok(())
+    }
+
+    fn op_find(&mut self) -> Result<(), ForthError> {
+        // FIND ( c-addr -- c-addr 0 | xt 1 | xt -1 )
+        // Search dictionary for word (counted string at c-addr)
+        // Returns: c-addr 0 (not found) | xt 1 (found, non-immediate) | xt -1 (found, immediate)
+
+        let name_addr = self.data_stack.peek()? as usize; // Keep on stack in case not found
+
+        // Get counted string (length byte + characters)
+        if name_addr >= self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        let search_len = self.memory[name_addr] as usize;
+        let search_name_addr = name_addr + 1;
+
+        // Get LATEST (start of dictionary chain)
+        let mut latest_bytes = [0u8; 8];
+        latest_bytes.copy_from_slice(&self.memory[LATEST_ADDR..LATEST_ADDR + 8]);
+        let mut current = i64::from_le_bytes(latest_bytes) as usize;
+
+        // Walk the dictionary chain
+        while current != 0 {
+            // Read LINK field (offset 0)
+            let mut link_bytes = [0u8; 8];
+            if current + 8 > self.memory.len() {
+                break;
+            }
+            link_bytes.copy_from_slice(&self.memory[current..current + 8]);
+            let link = i64::from_le_bytes(link_bytes) as usize;
+
+            // Read FLAGS field (offset 8)
+            let mut flags_bytes = [0u8; 8];
+            flags_bytes.copy_from_slice(&self.memory[current + 8..current + 16]);
+            let flags = i64::from_le_bytes(flags_bytes);
+
+            // Read NAME-LEN field (offset 16)
+            let name_len = self.memory[current + 16] as usize;
+
+            // Compare names (case-insensitive)
+            if name_len == search_len {
+                let dict_name_addr = current + 17;
+                let mut match_found = true;
+
+                for i in 0..name_len {
+                    let c1 = self.memory[search_name_addr + i].to_ascii_uppercase();
+                    let c2 = self.memory[dict_name_addr + i].to_ascii_uppercase();
+                    if c1 != c2 {
+                        match_found = false;
+                        break;
+                    }
+                }
+
+                if match_found {
+                    // Found it! Get CODE-ADDR
+                    let code_addr_offset = current + 17 + name_len;
+                    let aligned_offset = (code_addr_offset + 7) & !7;
+
+                    let mut code_addr_bytes = [0u8; 8];
+                    code_addr_bytes.copy_from_slice(&self.memory[aligned_offset..aligned_offset + 8]);
+                    let code_addr = i64::from_le_bytes(code_addr_bytes);
+
+                    // Pop the c-addr
+                    self.data_stack.pop()?;
+
+                    // Push xt (code address)
+                    self.data_stack.push(code_addr);
+
+                    // Push flag: -1 if immediate, 1 if not
+                    let flag = if (flags & F_IMMEDIATE) != 0 { -1 } else { 1 };
+                    self.data_stack.push(flag);
+
+                    return Ok(());
+                }
+            }
+
+            // Move to next word in chain
+            current = link;
+        }
+
+        // Not found - leave c-addr on stack and push 0
+        self.data_stack.push(0);
+        Ok(())
+    }
+
+    fn op_execute(&mut self) -> Result<(), ForthError> {
+        // EXECUTE ( xt -- )
+        // Execute the word at execution token xt
+        // Sets pending_execute which the interpreter will pick up
+
+        let xt = self.data_stack.pop()? as usize;
+        self.pending_execute = Some(xt);
+
+        Ok(())
+    }
+
+    fn op_compile_primitive(&mut self) -> Result<(), ForthError> {
+        // COMPILE-PRIM ( prim-id -- )
+        // Compile a primitive instruction: OP_PRIMITIVE (1 byte) + prim_id (1 byte)
+        let prim_id = self.data_stack.pop()? as u8;
+
+        // Get current DP
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let dp = i64::from_le_bytes(dp_bytes) as usize;
+
+        // Write opcode and prim_id
+        if dp + 2 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        self.memory[dp] = OP_PRIMITIVE;
+        self.memory[dp + 1] = prim_id;
+
+        // Update DP
+        let new_dp = (dp + 2) as i64;
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp.to_le_bytes());
+
+        Ok(())
+    }
+
+    fn op_compile_literal(&mut self) -> Result<(), ForthError> {
+        // COMPILE-LIT ( n -- )
+        // Compile a literal instruction: OP_LITERAL (1 byte) + value (8 bytes)
+        let value = self.data_stack.pop()?;
+
+        // Get current DP
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let dp = i64::from_le_bytes(dp_bytes) as usize;
+
+        // Write opcode and value
+        if dp + 9 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        self.memory[dp] = OP_LITERAL;
+        self.memory[dp + 1..dp + 9].copy_from_slice(&value.to_le_bytes());
+
+        // Update DP
+        let new_dp = (dp + 9) as i64;
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp.to_le_bytes());
+
+        Ok(())
+    }
+
+    fn op_compile_call(&mut self) -> Result<(), ForthError> {
+        // COMPILE-CALL ( addr -- )
+        // Compile a call instruction: OP_CALL (1 byte) + addr (8 bytes)
+        let addr = self.data_stack.pop()?;
+
+        // Get current DP
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let dp = i64::from_le_bytes(dp_bytes) as usize;
+
+        // Write opcode and address
+        if dp + 9 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        self.memory[dp] = OP_CALL;
+        self.memory[dp + 1..dp + 9].copy_from_slice(&addr.to_le_bytes());
+
+        // Update DP
+        let new_dp = (dp + 9) as i64;
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp.to_le_bytes());
+
+        Ok(())
+    }
+
+    fn op_compile_return(&mut self) -> Result<(), ForthError> {
+        // COMPILE-RETURN ( -- )
+        // Compile a return instruction: OP_RETURN (1 byte)
+
+        // Get current DP
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let dp = i64::from_le_bytes(dp_bytes) as usize;
+
+        // Write opcode
+        if dp + 1 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        self.memory[dp] = OP_RETURN;
+
+        // Update DP
+        let new_dp = (dp + 1) as i64;
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp.to_le_bytes());
+
+        Ok(())
+    }
+
+    fn op_compile_branch0(&mut self) -> Result<(), ForthError> {
+        // COMPILE-BRANCH0 ( addr -- )
+        // Compile a branch-if-zero instruction: OP_BRANCH0 (1 byte) + addr (8 bytes)
+        let addr = self.data_stack.pop()?;
+
+        // Get current DP
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let dp = i64::from_le_bytes(dp_bytes) as usize;
+
+        // Write opcode and address
+        if dp + 9 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        self.memory[dp] = OP_BRANCH0;
+        self.memory[dp + 1..dp + 9].copy_from_slice(&addr.to_le_bytes());
+
+        // Update DP
+        let new_dp = (dp + 9) as i64;
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp.to_le_bytes());
+
+        Ok(())
+    }
+
+    fn op_compile_branchnz(&mut self) -> Result<(), ForthError> {
+        // COMPILE-BRANCHNZ ( addr -- )
+        // Compile a branch-if-not-zero instruction: OP_BRANCHNZ (1 byte) + addr (8 bytes)
+        let addr = self.data_stack.pop()?;
+
+        // Get current DP
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let dp = i64::from_le_bytes(dp_bytes) as usize;
+
+        // Write opcode and address
+        if dp + 9 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        self.memory[dp] = OP_BRANCHNZ;
+        self.memory[dp + 1..dp + 9].copy_from_slice(&addr.to_le_bytes());
+
+        // Update DP
+        let new_dp = (dp + 9) as i64;
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp.to_le_bytes());
+
+        Ok(())
+    }
+
+    fn op_compile_jump(&mut self) -> Result<(), ForthError> {
+        // COMPILE-JUMP ( addr -- )
+        // Compile an unconditional jump instruction: OP_JUMP (1 byte) + addr (8 bytes)
+        let addr = self.data_stack.pop()?;
+
+        // Get current DP
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let dp = i64::from_le_bytes(dp_bytes) as usize;
+
+        // Write opcode and address
+        if dp + 9 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        self.memory[dp] = OP_JUMP;
+        self.memory[dp + 1..dp + 9].copy_from_slice(&addr.to_le_bytes());
+
+        // Update DP
+        let new_dp = (dp + 9) as i64;
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp.to_le_bytes());
+
+        Ok(())
+    }
+
+    fn op_compile_do_setup(&mut self) -> Result<(), ForthError> {
+        // COMPILE-DO-SETUP ( -- )
+        // Compile DO setup instruction: OP_DO_SETUP (1 byte)
+
+        // Get current DP
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let dp = i64::from_le_bytes(dp_bytes) as usize;
+
+        // Write opcode
+        if dp + 1 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        self.memory[dp] = OP_DO_SETUP;
+
+        // Update DP
+        let new_dp = (dp + 1) as i64;
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp.to_le_bytes());
+
+        Ok(())
+    }
+
+    fn op_compile_loop_check(&mut self) -> Result<(), ForthError> {
+        // COMPILE-LOOP-CHECK ( addr -- )
+        // Compile LOOP check instruction: OP_LOOP_CHECK (1 byte) + addr (8 bytes)
+        let addr = self.data_stack.pop()?;
+
+        // Get current DP
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let dp = i64::from_le_bytes(dp_bytes) as usize;
+
+        // Write opcode and address
+        if dp + 9 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        self.memory[dp] = OP_LOOP_CHECK;
+        self.memory[dp + 1..dp + 9].copy_from_slice(&addr.to_le_bytes());
+
+        // Update DP
+        let new_dp = (dp + 9) as i64;
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp.to_le_bytes());
+
+        Ok(())
+    }
+
+    fn op_compile_loop_end(&mut self) -> Result<(), ForthError> {
+        // COMPILE-LOOP-END ( -- )
+        // Compile LOOP end instruction: OP_LOOP_END (1 byte)
+
+        // Get current DP
+        let mut dp_bytes = [0u8; 8];
+        dp_bytes.copy_from_slice(&self.memory[DP_ADDR..DP_ADDR + 8]);
+        let dp = i64::from_le_bytes(dp_bytes) as usize;
+
+        // Write opcode
+        if dp + 1 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+        self.memory[dp] = OP_LOOP_END;
+
+        // Update DP
+        let new_dp = (dp + 1) as i64;
+        self.memory[DP_ADDR..DP_ADDR + 8].copy_from_slice(&new_dp.to_le_bytes());
+
         Ok(())
     }
 }

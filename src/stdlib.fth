@@ -58,7 +58,7 @@ VARIABLE BASE
   DUP 2OVER ROT ;
 
 : PICK ( x0 i*x u.i -- x0 i*x x0 )
-  DUP 0 = if DROP DUP exit then  SWAP >R 1 - RECURSE R> SWAP ;
+  DUP 0 = IF DROP DUP EXIT THEN  SWAP >R 1 - RECURSE R> SWAP ;
 
 \ ============================================================================
 \ ARITHMETIC
@@ -106,7 +106,8 @@ VARIABLE BASE
 
 : CHAR+ ( addr -- addr+1 ) 1+ ;
 : +! ( n addr -- ) DUP @ ROT + SWAP ! ;
-: FILL ( c-char u char -- ) ROT ROT 0 ?DO 2DUP C! CHAR+ LOOP 2DROP ;
+\ TODO: FILL requires ?DO loops
+\ : FILL ( c-char u char -- ) ROT ROT 0 ?DO 2DUP C! CHAR+ LOOP 2DROP ;
 
 \ ============================================================================
 \ STRINGS
@@ -142,7 +143,8 @@ VARIABLE BASE
 
 \ CHAR is implemented as an IMMEDIATE word in the compiler
 : SPACE ( -- ) BL EMIT ;
-: SPACES ( n -- ) 0 ?DO SPACE LOOP ;
+\ TODO: SPACES requires ?DO loops
+\ : SPACES ( n -- ) 0 ?DO SPACE LOOP ;
 
 \ ============================================================================
 \ USEFUL EXAMPLES

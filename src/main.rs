@@ -1,25 +1,31 @@
-// main_bytecode.rs - Forth REPL using bytecode interpreter
+// main_bytecode.rs - Forth REPL using self-hosting metacompiler
 
-use anvil::bytecode_compiler::BytecodeCompiler;
+use anvil::bootstrap::BootstrapCompiler;
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result};
 use std::env;
 use std::fs;
 
 fn main() -> Result<()> {
-    println!("Anvil Forth v0.3.0 (Bytecode Interpreter)");
+    println!("Anvil Forth v0.4.0 (Self-Hosting)");
     println!("Type .help for help, bye to exit");
     println!();
 
-    let mut compiler = BytecodeCompiler::new();
+    let mut compiler = BootstrapCompiler::new();
 
-    // Load standard library
+    // Load metacompiler first (defines control structures)
+    let metacompiler = include_str!("metacompiler.fth");
+    if let Err(e) = compiler.process_line(metacompiler) {
+        eprintln!("Error loading metacompiler: {}", e);
+        return Ok(());
+    }
+
+    // Load stdlib (uses control structures from metacompiler)
     let stdlib = include_str!("stdlib.fth");
-    compiler.process_source(stdlib)
-        .map_err(|e| {
-            eprintln!("Error loading stdlib: {}", e);
-            std::io::Error::other(e)
-        })?;
+    if let Err(e) = compiler.process_line(stdlib) {
+        eprintln!("Error loading stdlib: {}", e);
+        return Ok(());
+    }
 
     // Load files from command line arguments
     let args: Vec<String> = env::args().collect();
@@ -159,7 +165,7 @@ fn main() -> Result<()> {
                 }
 
                 // Process Forth code
-                match compiler.process_source(input) {
+                match compiler.process_line(input) {
                     Ok(()) => {
                         println!(" ok");
                     }
@@ -195,12 +201,12 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_file(compiler: &mut BytecodeCompiler, file_path: &str) -> std::result::Result<(), String> {
+fn load_file(compiler: &mut BootstrapCompiler, file_path: &str) -> std::result::Result<(), String> {
     let contents = fs::read_to_string(file_path)
         .map_err(|e| format!("Failed to read file: {}", e))?;
 
     let processed = preprocess_includes(&contents, file_path)?;
-    compiler.process_source(&processed)?;
+    compiler.process_line(&processed)?;
 
     Ok(())
 }
@@ -268,9 +274,34 @@ fn print_help() {
     println!("  INCLUDE mylib.fth ( load definitions from file )");
 }
 
-fn print_words(compiler: &BytecodeCompiler) {
-    let mut words: Vec<_> = compiler.dictionary.keys().cloned().collect();
-    words.sort();
+fn print_words(compiler: &BootstrapCompiler) {
+    use anvil::primitives::LATEST_ADDR;
+
+    let mut words = Vec::new();
+
+    // Walk the memory-based dictionary
+    let mut latest_bytes = [0u8; 8];
+    latest_bytes.copy_from_slice(&compiler.interpreter.vm.memory[LATEST_ADDR..LATEST_ADDR + 8]);
+    let mut current = i64::from_le_bytes(latest_bytes) as usize;
+
+    while current != 0 {
+        // Skip LINK (8) and FLAGS (8) = 16 bytes
+        let name_len_addr = current + 16;
+        let name_len = compiler.interpreter.vm.memory[name_len_addr] as usize;
+        let name_start = name_len_addr + 1;
+
+        if name_len > 0 && name_len < 64 { // Sanity check
+            let name_bytes = &compiler.interpreter.vm.memory[name_start..name_start + name_len];
+            if let Ok(name) = std::str::from_utf8(name_bytes) {
+                words.push(name.to_string());
+            }
+        }
+
+        // Get LINK to previous word
+        let mut link_bytes = [0u8; 8];
+        link_bytes.copy_from_slice(&compiler.interpreter.vm.memory[current..current + 8]);
+        current = i64::from_le_bytes(link_bytes) as usize;
+    }
 
     println!("Defined words ({}):", words.len());
     for (i, word) in words.iter().enumerate() {
@@ -284,7 +315,7 @@ fn print_words(compiler: &BytecodeCompiler) {
     }
 }
 
-fn print_stack(compiler: &BytecodeCompiler) {
+fn print_stack(compiler: &BootstrapCompiler) {
     let depth = compiler.interpreter.vm.data_stack.depth();
     print!("<{}> ", depth);
     for val in compiler.interpreter.vm.data_stack.iter() {

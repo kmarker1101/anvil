@@ -450,6 +450,11 @@ impl BytecodeCompiler {
                 } else {
                     self.interpreter.vm.execute_primitive(prim)
                         .map_err(|e| format!("Primitive error: {:?}", e))?;
+
+                    // Check if EXECUTE was called - if so, execute from memory
+                    if let Some(xt) = self.interpreter.vm.pending_execute.take() {
+                        self.interpreter.execute_from_memory(xt)?;
+                    }
                 }
             }
             WordInfo::Variable { offset, .. } => {
