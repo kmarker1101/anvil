@@ -21,6 +21,9 @@ fn main() -> Result<()> {
             std::io::Error::other(e)
         })?;
 
+    // Sync HERE pointer after stdlib loads
+    compiler.sync_here();
+
     // Load files from command line arguments
     let args: Vec<String> = env::args().collect();
     for file_path in args.iter().skip(1) {
@@ -80,8 +83,8 @@ fn main() -> Result<()> {
                 // Move cursor back to the end of the input line (gforth style)
                 print!("\x1b[A\x1b[{}C ", input.len());
 
-                // Handle REPL commands (but not the Forth "." word or ." string literal)
-                if input.starts_with('.') && input != "." && !input.starts_with(".\"") {
+                // Handle REPL commands (but not the Forth "." word or ." or .( )
+                if input.starts_with('.') && input != "." && !input.starts_with(".\"") && !input.starts_with(".(") {
                     let cmd = input.to_lowercase();
                     match cmd.as_str() {
                         ".quit" | ".exit" | ".q" => {

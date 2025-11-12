@@ -12,6 +12,7 @@ enum CompileState {
     Compile,
     ExpectingVariableName,
     ExpectingConstantName,
+    ExpectingCreatedName,
 }
 
 /// Information about a word in the dictionary
@@ -34,6 +35,10 @@ pub enum WordInfo {
         name: String,
         value: i64,
     },
+    Created {
+        name: String,
+        data_offset: usize,
+    },
 }
 
 /// Control flow frame for backpatching
@@ -43,7 +48,7 @@ enum ControlFrame {
     IfElse { _else_addr_placeholder: usize, end_addr_placeholder: usize },
     Begin { start_addr: usize },
     BeginWhile { start_addr: usize, end_addr_placeholder: usize },
-    Do { start_addr: usize },
+    Do { start_addr: usize, leave_placeholders: Vec<usize> },
     QuestionDo { question_do_setup_addr: usize },
 }
 
@@ -105,6 +110,18 @@ impl BytecodeCompiler {
         compiler
     }
 
+    /// Sync the compiler's variable offset with the VM's HERE pointer
+    /// Call this after loading stdlib or when HERE may have been modified
+    pub fn sync_here(&mut self) {
+        // If vm.here is ahead of next_variable_offset, update offset
+        if self.interpreter.vm.here > self.next_variable_offset {
+            self.next_variable_offset = self.interpreter.vm.here;
+        } else {
+            // Otherwise, update vm.here to match offset
+            self.interpreter.vm.here = self.next_variable_offset;
+        }
+    }
+
     /// Register all primitives from the Primitive enum
     fn register_primitives(&mut self) {
         for (name, _prim) in Primitive::all() {
@@ -129,7 +146,7 @@ impl BytecodeCompiler {
                 // Whitespace - end current token
                 ' ' | '\t' | '\n' | '\r' => {
                     if !current_token.is_empty() {
-                        // Check if this is ." or S" - if so, capture the string
+                        // Check if this is .", S", or .( - if so, capture the string
                         if current_token == ".\"" || current_token == "S\"" {
                             tokens.push(current_token.clone());
                             current_token.clear();
@@ -154,6 +171,25 @@ impl BytecodeCompiler {
                                 // Push the string content as a token (without quotes)
                                 tokens.push(string_content);
                             }
+                        } else if current_token == ".(" {
+                            tokens.push(current_token.clone());
+                            current_token.clear();
+
+                            // Capture until closing paren
+                            let mut string_content = String::new();
+                            let mut found_close = false;
+                            for ch in chars.by_ref() {
+                                if ch == ')' {
+                                    found_close = true;
+                                    break;
+                                }
+                                string_content.push(ch);
+                            }
+
+                            if found_close {
+                                // Push the string content as a token (without parens)
+                                tokens.push(string_content);
+                            }
                         } else {
                             tokens.push(current_token.clone());
                             current_token.clear();
@@ -161,17 +197,22 @@ impl BytecodeCompiler {
                     }
                 }
 
-                // Parenthesis comment
+                // Parenthesis comment (but not .( which is handled elsewhere)
                 '(' => {
-                    // Save current token if any
-                    if !current_token.is_empty() {
-                        tokens.push(current_token.clone());
-                        current_token.clear();
-                    }
-                    // Skip until closing paren
-                    for ch in chars.by_ref() {
-                        if ch == ')' {
-                            break;
+                    // Check if this is .( - if so, don't treat as comment
+                    if current_token == "." {
+                        current_token.push(ch);
+                    } else {
+                        // Save current token if any
+                        if !current_token.is_empty() {
+                            tokens.push(current_token.clone());
+                            current_token.clear();
+                        }
+                        // Skip until closing paren
+                        for ch in chars.by_ref() {
+                            if ch == ')' {
+                                break;
+                            }
                         }
                     }
                 }
@@ -288,6 +329,9 @@ impl BytecodeCompiler {
             CompileState::ExpectingConstantName => {
                 return self.define_constant(&token.to_uppercase());
             }
+            CompileState::ExpectingCreatedName => {
+                return self.define_create(&token.to_uppercase());
+            }
             _ => {}
         }
 
@@ -334,14 +378,27 @@ impl BytecodeCompiler {
             "?DO" => self.immediate_question_do(),
             "LOOP" => self.immediate_loop(),
             "+LOOP" => self.immediate_plus_loop(),
+            "LEAVE" => self.immediate_leave(),
             "EXIT" => self.immediate_exit(),
             "RECURSE" => self.immediate_recurse(),
             "IMMEDIATE" => self.mark_immediate(),
             "VARIABLE" => self.begin_variable(),
             "CONSTANT" => self.begin_constant(),
+            "CREATE" => self.begin_create(),
             "CHAR" => self.immediate_char(),
             ".\"" => self.immediate_dot_quote(),
+            ".(" => self.immediate_dot_paren(),
             "S\"" => self.immediate_s_quote(),
+            "INCLUDED" => self.compile_included(),
+            "EXECUTE" => self.compile_execute(),
+            "'" => self.immediate_tick(),
+            "[IF]" => self.conditional_if(),
+            "[ELSE]" => self.conditional_else(),
+            "[THEN]" => {
+                // [THEN] by itself does nothing, just marks the end
+                // If we get here, it means we were processing the true branch
+                Ok(())
+            }
 
             _ => {
                 // Look up word in dictionary
@@ -464,6 +521,14 @@ impl BytecodeCompiler {
                     self.emit(Instruction::PushConstant(*value));
                 } else {
                     self.interpreter.vm.data_stack.push(*value);
+                }
+            }
+            WordInfo::Created { data_offset, .. } => {
+                // Push the address of the data field
+                if compile_mode {
+                    self.emit(Instruction::PushLiteral(*data_offset as i64));
+                } else {
+                    self.interpreter.vm.data_stack.push(*data_offset as i64);
                 }
             }
             WordInfo::UserDefined { address, .. } => {
@@ -626,7 +691,7 @@ impl BytecodeCompiler {
         self.emit(Instruction::DoSetup);
 
         let start_addr = self.here();
-        self.control_stack.push(ControlFrame::Do { start_addr });
+        self.control_stack.push(ControlFrame::Do { start_addr, leave_placeholders: Vec::new() });
         Ok(())
     }
 
@@ -642,6 +707,7 @@ impl BytecodeCompiler {
 
         self.control_stack.push(ControlFrame::Do {
             start_addr,
+            leave_placeholders: Vec::new(),
         });
 
         // Store the QuestionDoSetup address so we can backpatch it at LOOP
@@ -680,7 +746,7 @@ impl BytecodeCompiler {
             .ok_or(format!("{} without DO", loop_name))?;
 
         match frame {
-            ControlFrame::Do { start_addr } => {
+            ControlFrame::Do { start_addr, leave_placeholders } => {
                 // Emit loop check instruction with placeholder
                 self.emit(loop_instruction);
                 let loop_check_addr = self.here() - 1;
@@ -692,6 +758,11 @@ impl BytecodeCompiler {
 
                 // Backpatch loop check to jump here when done
                 self.backpatch(loop_check_addr, end_addr);
+
+                // Backpatch all LEAVE instructions
+                for leave_addr in leave_placeholders {
+                    self.backpatch(leave_addr, end_addr);
+                }
 
                 // Backpatch ?DO setup if this was a ?DO loop
                 if let Some(addr) = question_do_setup_addr {
@@ -710,6 +781,37 @@ impl BytecodeCompiler {
 
     fn immediate_plus_loop(&mut self) -> Result<(), String> {
         self.compile_loop_end(Instruction::PlusLoopCheck(PLACEHOLDER_ADDR), "+LOOP")
+    }
+
+    fn immediate_leave(&mut self) -> Result<(), String> {
+        if self.state != CompileState::Compile {
+            return Err("LEAVE outside of definition".to_string());
+        }
+
+        // Find the innermost DO loop on the control stack
+        let stack_depth = self.control_stack.len();
+        let mut do_index = None;
+
+        // Search from top of stack backwards for a Do frame
+        for i in (0..stack_depth).rev() {
+            if matches!(self.control_stack[i], ControlFrame::Do { .. }) {
+                do_index = Some(i);
+                break;
+            }
+        }
+
+        let do_idx = do_index.ok_or("LEAVE without DO")?;
+
+        // Emit jump with placeholder
+        self.emit(Instruction::Jump(PLACEHOLDER_ADDR));
+        let leave_addr = self.here() - 1;
+
+        // Add to leave list
+        if let ControlFrame::Do { ref mut leave_placeholders, .. } = self.control_stack[do_idx] {
+            leave_placeholders.push(leave_addr);
+        }
+
+        Ok(())
     }
 
     fn immediate_exit(&mut self) -> Result<(), String> {
@@ -744,6 +846,10 @@ impl BytecodeCompiler {
         // Allocate 8 bytes in memory
         let offset = self.next_variable_offset;
         self.next_variable_offset += 8;
+
+        // Sync VM's here with compiler's variable offset
+        // This ensures HERE primitive returns correct value
+        self.interpreter.vm.here = self.next_variable_offset;
 
         self.variable_offsets.insert(name.to_string(), offset);
 
@@ -787,6 +893,39 @@ impl BytecodeCompiler {
         Ok(())
     }
 
+    fn begin_create(&mut self) -> Result<(), String> {
+        if self.state == CompileState::Compile {
+            return Err("CREATE cannot be used inside a definition".to_string());
+        }
+
+        self.state = CompileState::ExpectingCreatedName;
+        Ok(())
+    }
+
+    fn define_create(&mut self, name: &str) -> Result<(), String> {
+        // CREATE allocates space at the current variable offset
+        // The created word will push this address when executed
+        // Note: Unlike VARIABLE, CREATE doesn't allocate space itself
+        // Space is allocated with ALLOT after CREATE
+        let data_offset = self.next_variable_offset;
+
+        // Sync VM's here with compiler's variable offset
+        // This ensures HERE primitive returns correct value
+        self.interpreter.vm.here = self.next_variable_offset;
+
+        // Add to dictionary
+        self.dictionary.insert(
+            name.to_string(),
+            WordInfo::Created {
+                name: name.to_string(),
+                data_offset,
+            },
+        );
+
+        self.state = CompileState::Interpret;
+        Ok(())
+    }
+
     /// CHAR - Get ASCII value of next character
     fn immediate_char(&mut self) -> Result<(), String> {
         if self.token_index >= self.token_stream.len() {
@@ -806,6 +945,21 @@ impl BytecodeCompiler {
             self.interpreter.vm.data_stack.push(char_code);
         }
 
+        Ok(())
+    }
+
+    /// .( - Print message immediately (like ." but always immediate)
+    fn immediate_dot_paren(&mut self) -> Result<(), String> {
+        // Get the string content from the next token
+        // The tokenizer should have captured text up to the closing paren
+        if self.token_index >= self.token_stream.len() {
+            return Err(".( missing message".to_string());
+        }
+        let text = self.token_stream[self.token_index].clone();
+        self.token_index += 1;
+
+        // .( always prints immediately, regardless of state
+        print!("{}", text);
         Ok(())
     }
 
@@ -833,6 +987,171 @@ impl BytecodeCompiler {
         }
 
         Ok(())
+    }
+
+    /// ' (tick) - Get execution token of next word
+    fn immediate_tick(&mut self) -> Result<(), String> {
+        // Get the next word name
+        if self.token_index >= self.token_stream.len() {
+            return Err("' (tick): unexpected end of input".to_string());
+        }
+
+        let word_name = self.token_stream[self.token_index].to_uppercase();
+        self.token_index += 1;
+
+        // Look up the word
+        let word_info = self.dictionary.get(&word_name)
+            .ok_or(format!("' (tick): unknown word: {}", word_name))?
+            .clone();
+
+        // Get the execution token (bytecode address)
+        let xt = match word_info {
+            WordInfo::UserDefined { address, .. } => address as i64,
+            _ => {
+                return Err(format!("' (tick): word {} is not user-defined", word_name));
+            }
+        };
+
+        // Push the XT onto the stack
+        if self.state == CompileState::Compile {
+            self.emit(Instruction::PushLiteral(xt));
+        } else {
+            self.interpreter.vm.data_stack.push(xt);
+        }
+
+        Ok(())
+    }
+
+    /// INCLUDED - Load a file from address and length on stack
+    fn compile_included(&mut self) -> Result<(), String> {
+        if self.state == CompileState::Compile {
+            return Err("INCLUDED cannot be used inside a definition".to_string());
+        }
+
+        // Pop length and address from stack
+        let len = self.interpreter.vm.data_stack.pop()
+            .map_err(|e| format!("INCLUDED: need length on stack: {:?}", e))? as usize;
+        let addr = self.interpreter.vm.data_stack.pop()
+            .map_err(|e| format!("INCLUDED: need address on stack: {:?}", e))? as usize;
+
+        // Read filename from memory
+        if addr + len > self.interpreter.vm.memory.len() {
+            return Err("INCLUDED: address out of bounds".to_string());
+        }
+
+        let filename_bytes = &self.interpreter.vm.memory[addr..addr + len];
+        let filename = std::str::from_utf8(filename_bytes)
+            .map_err(|e| format!("INCLUDED: invalid UTF-8: {}", e))?;
+
+        // Load the file
+        let contents = std::fs::read_to_string(filename)
+            .map_err(|e| format!("INCLUDED: failed to read {}: {}", filename, e))?;
+
+        // Process it
+        self.process_source(&contents)?;
+
+        Ok(())
+    }
+
+    /// EXECUTE - Execute an execution token from the stack
+    fn compile_execute(&mut self) -> Result<(), String> {
+        if self.state == CompileState::Compile {
+            // Emit ExecuteXT instruction
+            self.emit(Instruction::ExecuteXT);
+        } else {
+            // In interpret mode, execute immediately
+            // This is tricky - we need to call bytecode from within the interpreter
+            // For now, just emit and execute
+            let start = self.bytecode.len();
+            self.emit(Instruction::ExecuteXT);
+            self.emit(Instruction::Return);
+            self.interpreter.execute(&self.bytecode, start)?;
+            self.bytecode.truncate(start); // Remove temporary code
+        }
+        Ok(())
+    }
+
+    /// [IF] - Conditional compilation (interpret mode only)
+    fn conditional_if(&mut self) -> Result<(), String> {
+        // Pop flag from stack
+        let flag = self.interpreter.vm.data_stack.pop()
+            .map_err(|e| format!("[IF] requires a flag on the stack: {:?}", e))?;
+
+        // If flag is false (0), skip until matching [ELSE] or [THEN]
+        if flag == 0 {
+            self.skip_until_else_or_then()?;
+        }
+        // If flag is true, continue processing normally
+        Ok(())
+    }
+
+    /// [ELSE] - Skip to [THEN] (we're in the true branch, so skip the else part)
+    fn conditional_else(&mut self) -> Result<(), String> {
+        // If we encounter [ELSE] during normal processing, it means the [IF] was true
+        // So we skip the else branch
+        self.skip_until_then()
+    }
+
+    /// Skip tokens until matching [ELSE] or [THEN], handling nested [IF]s
+    fn skip_until_else_or_then(&mut self) -> Result<(), String> {
+        let mut depth = 1; // Track nesting level
+
+        while self.token_index < self.token_stream.len() && depth > 0 {
+            let token = self.token_stream[self.token_index].to_uppercase();
+            self.token_index += 1;
+
+            match token.as_str() {
+                "[IF]" => depth += 1,
+                "[ELSE]" => {
+                    if depth == 1 {
+                        // Found matching [ELSE], stop skipping
+                        return Ok(());
+                    }
+                }
+                "[THEN]" => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // Found matching [THEN], stop skipping
+                        return Ok(());
+                    }
+                }
+                _ => {
+                    // Skip this token
+                }
+            }
+        }
+
+        if depth > 0 {
+            Err("[IF] without matching [THEN]".to_string())
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Skip tokens until matching [THEN], handling nested [IF]s
+    fn skip_until_then(&mut self) -> Result<(), String> {
+        let mut depth = 1; // Track nesting level
+
+        while self.token_index < self.token_stream.len() && depth > 0 {
+            let token = self.token_stream[self.token_index].to_uppercase();
+            self.token_index += 1;
+
+            match token.as_str() {
+                "[IF]" => depth += 1,
+                "[THEN]" => {
+                    depth -= 1;
+                }
+                _ => {
+                    // Skip this token
+                }
+            }
+        }
+
+        if depth > 0 {
+            Err("[ELSE] without matching [THEN]".to_string())
+        } else {
+            Ok(())
+        }
     }
 
     /// S" - Create string literal (address and length on stack)

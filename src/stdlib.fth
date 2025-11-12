@@ -108,6 +108,17 @@ VARIABLE BASE
 : +! ( n addr -- ) DUP @ ROT + SWAP ! ;
 : FILL ( c-char u char -- ) ROT ROT 0 ?DO 2DUP C! CHAR+ LOOP 2DROP ;
 
+\ Cell-based memory operations
+: CELLS ( n1 -- n2 ) 8 * ;        \ Size in bytes of n1 cells (64-bit cells)
+: CELL+ ( addr -- addr' ) 8 + ;   \ Add size of one cell to address
+: ALLOT ( n -- ) HERE @ + HERE ! ;  \ Allocate n bytes
+
+\ CREATE needs to be a primitive in the bytecode compiler
+\ because it needs to create new dictionary entries dynamically.
+\ For now, we can use a workaround for simple cases:
+\ Instead of: CREATE FOO 32 CELLS ALLOT
+\ You can do: VARIABLE FOO ( and manually manage the array )
+
 \ ============================================================================
 \ STRINGS
 \ ============================================================================
@@ -163,3 +174,20 @@ VARIABLE BASE
 : ENDUNLESS
     THEN
 ; IMMEDIATE
+
+\\ ============================================================================
+\\ ENVIRONMENT QUERIES
+\\ ============================================================================
+
+\\ ENVIRONMENT? - Query system capabilities
+\\ For now, return FALSE for all queries (we don't support floating point yet)
+: ENVIRONMENT? ( c-addr u -- false | i*x true )
+    2DROP FALSE ;
+
+\\ .( - Print message (similar to ." but always immediate)
+\\ This is handled by the compiler as a special word
+
+\\ INCLUDED - Load a file given address and length
+\\ This needs to be handled by the compiler/REPL since we need to actually load files
+\\ It's the same as INCLUDE but takes addr/len instead of parsing
+

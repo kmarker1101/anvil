@@ -221,6 +221,19 @@ impl Interpreter {
                     }
                     ip += 1;
                 }
+
+                Instruction::ExecuteXT => {
+                    // Pop execution token (bytecode address) from data stack
+                    let xt = self
+                        .vm
+                        .data_stack
+                        .pop()
+                        .map_err(|e| format!("ExecuteXT: {:?}", e))?;
+
+                    // Push return address and jump to XT
+                    self.call_stack.push(ip + 1);
+                    ip = xt as usize;
+                }
             }
         }
     }

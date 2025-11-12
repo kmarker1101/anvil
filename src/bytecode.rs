@@ -46,6 +46,9 @@ pub enum Instruction {
 
     /// Clean up loop stack at loop end
     LoopEnd,
+
+    /// Execute an execution token from the data stack
+    ExecuteXT,
 }
 
 /// A compiled word consists of bytecode instructions
