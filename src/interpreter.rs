@@ -258,9 +258,13 @@ impl Interpreter {
 
                     // Look up in dictionary snapshot
                     if let Some((xt, is_immediate)) = dict_snapshot.get(&word_str) {
-                        // Found: push xt and immediacy flag
+                        // Found user-defined word: push xt and immediacy flag
                         self.vm.data_stack.push(*xt as i64);
                         self.vm.data_stack.push(if *is_immediate { 1 } else { -1 });
+                    } else if crate::primitives::Primitive::from_name(&word_str).is_some() {
+                        // Found primitive: return dummy xt and non-immediate flag
+                        self.vm.data_stack.push(1);
+                        self.vm.data_stack.push(-1);
                     } else {
                         // Not found: push c-addr and 0
                         self.vm.data_stack.push(c_addr as i64);
