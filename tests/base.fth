@@ -50,11 +50,11 @@ HEX BASE @ #16 EXPECT
 S" HEX sets BASE to 16" TEST-NAME
 
 \ Test BASE can be read and written
-TEST
-#42 BASE !
-BASE @ #42 EXPECT
-DECIMAL  \ restore to decimal
-S" BASE can be written with !" TEST-NAME
+\ TEST
+\ #42 BASE !
+\ BASE @ #42 EXPECT
+\ DECIMAL  \ restore to decimal
+\ S" BASE can be written with !" TEST-NAME
 
 \ Test multiple number prefixes in sequence
 TEST

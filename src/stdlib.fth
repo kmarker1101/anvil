@@ -1,3 +1,6 @@
+: NIP ( a b -- b ) SWAP DROP ;
+: \ SOURCE NIP >IN ! ; IMMEDIATE
+
 \ stdlib.fth - Forth Standard Library
 \ These are words built from primitives
 
@@ -35,7 +38,7 @@
 
 : 2DROP ( a b -- ) DROP DROP ;
 
-: NIP ( a b -- b ) SWAP DROP ;
+\ : NIP ( a b -- b ) SWAP DROP ;
 
 : TUCK ( a b -- b a b ) SWAP OVER ;
 
@@ -176,19 +179,19 @@
     THEN
 ; IMMEDIATE
 
-\\ ============================================================================
-\\ ENVIRONMENT QUERIES
-\\ ============================================================================
+\ ============================================================================
+\ ENVIRONMENT QUERIES
+\ ============================================================================
 
-\\ ENVIRONMENT? - Query system capabilities
-\\ For now, return FALSE for all queries (we don't support floating point yet)
+\ ENVIRONMENT? - Query system capabilities
+\ For now, return FALSE for all queries (we don't support floating point yet)
 : ENVIRONMENT? ( c-addr u -- false | i*x true )
     2DROP FALSE ;
 
-\\ .( - Print message (similar to ." but always immediate)
-\\ This is handled by the compiler as a special word
+\ .( - Print message (similar to ." but always immediate)
+\ This is handled by the compiler as a special word
 
-\\ INCLUDED - Load a file given address and length
-\\ This needs to be handled by the compiler/REPL since we need to actually load files
-\\ It's the same as INCLUDE but takes addr/len instead of parsing
+\ INCLUDED - Load a file given address and length
+\ This needs to be handled by the compiler/REPL since we need to actually load files
+\ It's the same as INCLUDE but takes addr/len instead of parsing
 

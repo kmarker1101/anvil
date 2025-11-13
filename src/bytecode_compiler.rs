@@ -300,18 +300,6 @@ impl BytecodeCompiler {
         Ok(())
     }
 
-    /// Strip backslash comments from a line (\ comments only)
-    /// Parenthetical comments are handled by the tokenizer
-    fn strip_backslash_comments(line: &str) -> &str {
-        // Find \ at start or preceded by whitespace
-        if let Some(pos) = line.find('\\') {
-            if pos == 0 || line[..pos].ends_with(char::is_whitespace) {
-                return &line[..pos];
-            }
-        }
-        line
-    }
-
     /// Check if a line starts a definition
     fn starts_definition(line: &str) -> bool {
         let trimmed = line.trim_start();
@@ -327,46 +315,21 @@ impl BytecodeCompiler {
         self.interpreter.vm.memory[crate::primitives::TO_IN_ADDR..crate::primitives::TO_IN_ADDR + 8]
             .copy_from_slice(&to_in_bytes);
 
-        let mut accumulated = String::new();
-        let mut in_definition = false;
-
         for line in source.lines() {
-            // Strip backslash comments only
-            let line = Self::strip_backslash_comments(line);
+            // Don't strip backslash comments - \ is handled as a Forth word in stdlib
+            // Parenthetical comments are handled by the tokenizer
 
-            // Skip empty lines when not in definition
-            if line.trim().is_empty() && !in_definition {
+            // Skip empty lines
+            if line.trim().is_empty() {
                 continue;
             }
 
-            // Check if line contains : or ;
-            let has_colon = Self::starts_definition(line);
-            let has_semicolon = line.contains(';');
-
-            if in_definition {
-                // Accumulate this line
-                accumulated.push(' ');
-                accumulated.push_str(line);
-
-                // Check if definition ends
-                if has_semicolon {
-                    in_definition = false;
-                    // Process the complete definition
-                    self.process_line(&accumulated)?;
-                    accumulated.clear();
-                }
-            } else if has_colon && !has_semicolon {
-                // Start of multi-line definition
-                in_definition = true;
-                accumulated = line.to_string();
-            } else {
-                // Single line - process immediately
-                self.process_line(line)?;
-            }
+            // Process each line - compilation state persists across lines
+            self.process_line(line)?;
         }
 
-        // If we're still in a definition at end, that's an error
-        if in_definition {
+        // Check if we ended in the middle of a definition
+        if self.state == CompileState::Compile && self.current_word_name.is_some() {
             return Err("Unterminated definition".to_string());
         }
 
