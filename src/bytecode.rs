@@ -49,6 +49,10 @@ pub enum Instruction {
 
     /// Execute an execution token from the data stack
     ExecuteXT,
+
+    /// Find word in dictionary: ( c-addr -- c-addr 0 | xt 1 | xt -1 )
+    /// Includes snapshot of user-defined words (name -> (address, is_immediate))
+    FindWord(std::collections::HashMap<String, (usize, bool)>),
 }
 
 /// A compiled word consists of bytecode instructions

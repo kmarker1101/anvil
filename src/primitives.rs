@@ -522,8 +522,13 @@ impl VM {
             self.memory[WORD_BUFFER_ADDR + 1..WORD_BUFFER_ADDR + 1 + word_len].copy_from_slice(&temp);
         }
 
-        // Update >IN
-        let new_to_in = pos as i64;
+        // Update >IN to position after delimiter (or end of input)
+        // If we found a delimiter, skip over it
+        let new_to_in = if pos < self.input_length {
+            pos + 1  // Skip the delimiter
+        } else {
+            pos  // At end of input
+        } as i64;
         let to_in_bytes = new_to_in.to_le_bytes();
         self.memory[TO_IN_ADDR..TO_IN_ADDR + 8].copy_from_slice(&to_in_bytes);
 

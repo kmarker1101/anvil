@@ -420,13 +420,23 @@ impl BytecodeCompiler {
 
         // Try to parse as number
         let num_result = if let Some(stripped) = token.strip_prefix('#') {
+            // # prefix forces decimal
             stripped.parse::<i64>()
         } else if let Some(stripped) = token.strip_prefix('$') {
+            // $ prefix forces hex
             i64::from_str_radix(stripped, 16)
         } else if let Some(stripped) = token.strip_prefix('%') {
+            // % prefix forces binary
             i64::from_str_radix(stripped, 2)
         } else {
-            token.parse::<i64>()
+            // No prefix: use BASE variable
+            let base_addr = crate::primitives::BASE_ADDR;
+            let mut base_bytes = [0u8; 8];
+            base_bytes.copy_from_slice(&self.interpreter.vm.memory[base_addr..base_addr + 8]);
+            let base = i64::from_le_bytes(base_bytes) as u32;
+
+            // Parse using current base (default 10)
+            i64::from_str_radix(&token, base)
         };
 
         if let Ok(num) = num_result {
@@ -469,6 +479,8 @@ impl BytecodeCompiler {
             "CONSTANT" => self.begin_constant(),
             "CREATE" => self.begin_create(),
             "CHAR" => self.immediate_char(),
+            "[CHAR]" => self.immediate_bracket_char(),
+            "FIND" => self.compile_or_execute_find(),
             ".\"" => self.immediate_dot_quote(),
             ".(" => self.immediate_dot_paren(),
             "S\"" => self.immediate_s_quote(),
@@ -1023,6 +1035,92 @@ impl BytecodeCompiler {
             self.emit(Instruction::PushLiteral(char_code));
         } else {
             self.interpreter.vm.data_stack.push(char_code);
+        }
+
+        Ok(())
+    }
+
+    /// [CHAR] - Compile-time CHAR (immediate word)
+    /// Parse next word and compile its first character as a literal
+    fn immediate_bracket_char(&mut self) -> Result<(), String> {
+        // [CHAR] can only be used in compilation mode
+        if self.state != CompileState::Compile {
+            return Err("[CHAR] can only be used inside a definition".to_string());
+        }
+
+        // Get next token from input
+        let next_token = self.next_token()?
+            .ok_or("[CHAR]: unexpected end of input".to_string())?;
+
+        let ch = next_token.chars().next()
+            .ok_or("[CHAR]: empty token".to_string())?;
+        let char_code = ch as i64;
+
+        // Always compile the character literal
+        self.emit(Instruction::PushLiteral(char_code));
+
+        Ok(())
+    }
+
+    /// FIND - Find a word in the dictionary (compile or execute)
+    /// ( c-addr -- c-addr 0 | xt 1 | xt -1 )
+    fn compile_or_execute_find(&mut self) -> Result<(), String> {
+        if self.state == CompileState::Compile {
+            // Compile mode: snapshot dictionary and emit FindWord instruction
+            let mut dict_snapshot = std::collections::HashMap::new();
+            for (name, word_info) in &self.dictionary {
+                if let WordInfo::UserDefined { address, is_immediate, .. } = word_info {
+                    dict_snapshot.insert(name.clone(), (*address, *is_immediate));
+                }
+            }
+            self.emit(Instruction::FindWord(dict_snapshot));
+            Ok(())
+        } else {
+            // Interpret mode: execute directly
+            self.execute_find()
+        }
+    }
+
+    /// Execute FIND directly (interpret mode only)
+    fn execute_find(&mut self) -> Result<(), String> {
+        // Pop c-addr from stack
+        let addr = self.interpreter.vm.data_stack
+            .pop()
+            .map_err(|_| "FIND: stack underflow")?;
+
+        // Read counted string from memory
+        let addr_usize = addr as usize;
+        if addr_usize >= self.interpreter.vm.memory.len() {
+            return Err(format!("FIND: c-addr out of bounds: {}", addr_usize));
+        }
+
+        let len = self.interpreter.vm.memory[addr_usize] as usize;
+        if addr_usize + 1 + len > self.interpreter.vm.memory.len() {
+            return Err("FIND: string extends beyond memory".to_string());
+        }
+
+        let name_bytes = &self.interpreter.vm.memory[addr_usize + 1..addr_usize + 1 + len];
+        let name = String::from_utf8_lossy(name_bytes).to_uppercase();
+
+        // Search dictionary
+        if let Some(word_info) = self.dictionary.get(&name) {
+            match word_info {
+                WordInfo::UserDefined { address, is_immediate, .. } => {
+                    // Found user-defined word: push xt and immediacy flag
+                    self.interpreter.vm.data_stack.push(*address as i64);
+                    self.interpreter.vm.data_stack.push(if *is_immediate { 1 } else { -1 });
+                }
+                _ => {
+                    // Primitives, variables, constants don't have execution tokens
+                    // Return not found
+                    self.interpreter.vm.data_stack.push(addr);
+                    self.interpreter.vm.data_stack.push(0);
+                }
+            }
+        } else {
+            // Not found: push c-addr and 0
+            self.interpreter.vm.data_stack.push(addr);
+            self.interpreter.vm.data_stack.push(0);
         }
 
         Ok(())

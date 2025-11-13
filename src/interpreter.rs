@@ -234,6 +234,41 @@ impl Interpreter {
                     self.call_stack.push(ip + 1);
                     ip = xt as usize;
                 }
+
+                Instruction::FindWord(dict_snapshot) => {
+                    // ( c-addr -- c-addr 0 | xt 1 | xt -1 )
+                    let c_addr = self
+                        .vm
+                        .data_stack
+                        .pop()
+                        .map_err(|e| format!("FindWord: {:?}", e))? as usize;
+
+                    // Read counted string from memory
+                    if c_addr >= self.vm.memory.len() {
+                        return Err(format!("FindWord: c-addr out of bounds: {}", c_addr));
+                    }
+
+                    let count = self.vm.memory[c_addr] as usize;
+                    if c_addr + 1 + count > self.vm.memory.len() {
+                        return Err("FindWord: string extends beyond memory".to_string());
+                    }
+
+                    let word_bytes = &self.vm.memory[c_addr + 1..c_addr + 1 + count];
+                    let word_str = String::from_utf8_lossy(word_bytes).to_uppercase();
+
+                    // Look up in dictionary snapshot
+                    if let Some((xt, is_immediate)) = dict_snapshot.get(&word_str) {
+                        // Found: push xt and immediacy flag
+                        self.vm.data_stack.push(*xt as i64);
+                        self.vm.data_stack.push(if *is_immediate { 1 } else { -1 });
+                    } else {
+                        // Not found: push c-addr and 0
+                        self.vm.data_stack.push(c_addr as i64);
+                        self.vm.data_stack.push(0);
+                    }
+
+                    ip += 1;
+                }
             }
         }
     }
