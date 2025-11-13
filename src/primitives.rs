@@ -13,6 +13,9 @@ pub const BASE_ADDR: usize = 0x100;
 /// Memory address for the >IN variable (current parse position in input buffer)
 pub const TO_IN_ADDR: usize = 0x108;
 
+/// Memory address for the HERE variable (dictionary/data space pointer)
+pub const HERE_ADDR: usize = 0x110;
+
 /// Memory address for the input buffer (SOURCE returns this address)
 pub const INPUT_BUFFER_ADDR: usize = 0x200;
 
@@ -254,6 +257,7 @@ define_primitives! {
     CFetch => "C@": "C@ ( addr -- c ) Fetch byte from memory" => op_c_fetch,
     CStore => "C!": "C! ( c addr -- ) Store byte to memory" => op_c_store,
     Here => "HERE": "HERE ( -- addr ) Get dictionary pointer" => op_here,
+    Allot => "ALLOT": "ALLOT ( n -- ) Allocate n bytes in data space" => op_allot,
     CharPlus => "CHAR+": "CHAR+ ( c-addr1 -- c-addr2 ) Add character size to address" => op_char_plus,
     Chars => "CHARS": "CHARS ( n1 -- n2 ) Size in address units of n1 characters" => op_chars,
     Base => "BASE": "BASE ( -- a-addr ) Address of cell containing current number-conversion radix" => op_base,
@@ -347,6 +351,10 @@ impl VM {
         let to_in_bytes = 0i64.to_le_bytes();
         vm.memory[TO_IN_ADDR..TO_IN_ADDR + 8].copy_from_slice(&to_in_bytes);
 
+        // Initialize HERE to point to start of data space
+        let here_bytes = (vm.here as i64).to_le_bytes();
+        vm.memory[HERE_ADDR..HERE_ADDR + 8].copy_from_slice(&here_bytes);
+
         vm
     }
 
@@ -419,6 +427,12 @@ impl VM {
             return Err(ForthError::InvalidMemoryAddress);
         }
         self.memory[addr..addr + 8].copy_from_slice(&value.to_le_bytes());
+
+        // Sync special variables back to fields
+        if addr == HERE_ADDR {
+            self.here = value as usize;
+        }
+
         Ok(())
     }
 
@@ -446,6 +460,19 @@ impl VM {
     fn op_here(&mut self) -> Result<(), ForthError> {
         // HERE ( -- addr )
         self.data_stack.push(self.here as i64);
+        Ok(())
+    }
+
+    fn op_allot(&mut self) -> Result<(), ForthError> {
+        // ALLOT ( n -- )
+        // Allocate n bytes in data space
+        let n = self.data_stack.pop()?;
+        self.here = (self.here as i64 + n) as usize;
+
+        // Sync to memory
+        let here_bytes = (self.here as i64).to_le_bytes();
+        self.memory[HERE_ADDR..HERE_ADDR + 8].copy_from_slice(&here_bytes);
+
         Ok(())
     }
 

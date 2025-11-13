@@ -499,13 +499,12 @@ impl BytecodeCompiler {
                 // Look up word in dictionary
                 if let Some(word_info) = self.dictionary.get(&word_upper).cloned() {
                     // Check if IMMEDIATE word during compilation
-                    if let WordInfo::UserDefined { is_immediate: true, source_tokens: Some(ref tokens), .. } = word_info
-                        && self.state == CompileState::Compile {
-                        // Re-execute tokens
-                        for token in tokens {
-                            self.process_token(token)?;
+                    if let WordInfo::UserDefined { is_immediate: true, address, .. } = word_info {
+                        if self.state == CompileState::Compile {
+                            // Execute the word immediately by running its bytecode
+                            self.interpreter.execute(&self.bytecode, address)?;
+                            return Ok(());
                         }
-                        return Ok(());
                     }
                     // Process word (compile or execute based on state)
                     self.process_word(&word_info, self.state == CompileState::Compile)

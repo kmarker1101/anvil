@@ -111,7 +111,8 @@
 \ Cell-based memory operations
 : CELLS ( n1 -- n2 ) 8 * ;        \ Size in bytes of n1 cells (64-bit cells)
 : CELL+ ( addr -- addr' ) 8 + ;   \ Add size of one cell to address
-: ALLOT ( n -- ) HERE @ + HERE ! ;  \ Allocate n bytes
+\ ALLOT is now a primitive
+\ : ALLOT ( n -- ) HERE @ + HERE ! ;  \ Allocate n bytes
 
 \ CREATE needs to be a primitive in the bytecode compiler
 \ because it needs to create new dictionary entries dynamically.
