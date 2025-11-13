@@ -355,6 +355,9 @@ impl VM {
         let bytes = input.as_bytes();
         let len = bytes.len().min(INPUT_BUFFER_SIZE);
 
+        // Clear the entire buffer first to avoid stale data
+        self.memory[INPUT_BUFFER_ADDR..INPUT_BUFFER_ADDR + INPUT_BUFFER_SIZE].fill(0);
+
         // Copy input to buffer
         self.memory[INPUT_BUFFER_ADDR..INPUT_BUFFER_ADDR + len]
             .copy_from_slice(&bytes[..len]);

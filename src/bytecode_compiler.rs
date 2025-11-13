@@ -54,12 +54,21 @@ enum ControlFrame {
 
 /// Bytecode compiler
 pub struct BytecodeCompiler {
+    // === PERSISTENT STATE (never reset) ===
     /// All bytecode instructions
     pub bytecode: Bytecode,
 
     /// Dictionary: word name -> WordInfo
     pub dictionary: HashMap<String, WordInfo>,
 
+    /// Variable allocation in memory
+    variable_offsets: HashMap<String, usize>,
+    next_variable_offset: usize,
+
+    /// Interpreter for immediate execution
+    pub interpreter: Interpreter,
+
+    // === COMPILATION STATE (persists across lines within definitions) ===
     /// Current compilation state
     state: CompileState,
 
@@ -74,16 +83,11 @@ pub struct BytecodeCompiler {
     /// Control flow stack for backpatching
     control_stack: Vec<ControlFrame>,
 
-    /// Token stream and current position
-    token_stream: Vec<String>,
-    token_index: usize,
-
-    /// Variable allocation in memory
-    variable_offsets: HashMap<String, usize>,
-    next_variable_offset: usize,
-
-    /// Interpreter for immediate execution
-    pub interpreter: Interpreter,
+    // === PER-LINE STATE (reset at start of each line) ===
+    /// Current line being processed
+    input: String,
+    /// Position in current line
+    pos: usize,
 }
 
 impl BytecodeCompiler {
@@ -91,17 +95,17 @@ impl BytecodeCompiler {
         let mut compiler = BytecodeCompiler {
             bytecode: Vec::new(),
             dictionary: HashMap::new(),
+            variable_offsets: HashMap::new(),
+            next_variable_offset: 0,
+            interpreter: Interpreter::new(),
             state: CompileState::Interpret,
             current_word_name: None,
             current_word_start: 0,
             current_word_tokens: Vec::new(),
             last_defined_word: None,
             control_stack: Vec::new(),
-            token_stream: Vec::new(),
-            token_index: 0,
-            variable_offsets: HashMap::new(),
-            next_variable_offset: 0,
-            interpreter: Interpreter::new(),
+            input: String::new(),
+            pos: 0,
         };
 
         // Register all primitives in dictionary
@@ -122,6 +126,40 @@ impl BytecodeCompiler {
         }
     }
 
+    /// Sync >IN in VM memory to match self.pos
+    fn sync_to_in(&mut self) {
+        let to_in_bytes = (self.pos as i64).to_le_bytes();
+        self.interpreter.vm.memory[crate::primitives::TO_IN_ADDR..crate::primitives::TO_IN_ADDR + 8]
+            .copy_from_slice(&to_in_bytes);
+    }
+
+    /// Sync self.pos to match >IN in VM memory (for when Forth code modifies >IN)
+    fn sync_pos_from_to_in(&mut self) {
+        let mut to_in_bytes = [0u8; 8];
+        to_in_bytes.copy_from_slice(&self.interpreter.vm.memory[crate::primitives::TO_IN_ADDR..
+            crate::primitives::TO_IN_ADDR + 8]);
+        self.pos = i64::from_le_bytes(to_in_bytes) as usize;
+    }
+
+    /// Parse a string literal from the current input line
+    /// Used for S" and ." words
+    fn parse_string_literal(&mut self) -> Result<String, String> {
+        let start = self.pos;
+
+        // Find closing quote
+        while self.pos < self.input.len() {
+            if self.input.as_bytes()[self.pos] == b'"' {
+                let string = self.input[start..self.pos].to_string();
+                self.pos += 1; // Skip closing quote
+                self.sync_to_in();
+                return Ok(string);
+            }
+            self.pos += 1;
+        }
+
+        Err("Unterminated string literal".to_string())
+    }
+
     /// Register all primitives from the Primitive enum
     fn register_primitives(&mut self) {
         for (name, _prim) in Primitive::all() {
@@ -134,157 +172,202 @@ impl BytecodeCompiler {
         }
     }
 
-    /// Tokenize Forth source code
-    /// Special handling: ." and S" tokens capture the entire string including quotes
-    fn tokenize(source: &str) -> Vec<String> {
-        let mut tokens = Vec::new();
-        let mut chars = source.chars().peekable();
-        let mut current_token = String::new();
+    /// Parse next token from INPUT_BUFFER starting at >IN, updating >IN
+    fn next_token(&mut self) -> Result<Option<String>, String> {
+        // Sync from >IN in case Forth code modified it
+        self.sync_pos_from_to_in();
 
-        while let Some(ch) = chars.next() {
-            match ch {
-                // Whitespace - end current token
-                ' ' | '\t' | '\n' | '\r' => {
-                    if !current_token.is_empty() {
-                        // Check if this is .", S", or .( - if so, capture the string
-                        if current_token == ".\"" || current_token == "S\"" {
-                            tokens.push(current_token.clone());
-                            current_token.clear();
+        // Skip whitespace and comments
+        loop {
+            // Skip whitespace
+            while self.pos < self.input.len() && self.input.as_bytes()[self.pos].is_ascii_whitespace() {
+                self.pos += 1;
+            }
 
-                            // Skip one space if present (delimiter)
-                            if chars.peek() == Some(&' ') {
-                                chars.next();
-                            }
+            // End of input
+            if self.pos >= self.input.len() {
+                self.sync_to_in();
+                return Ok(None);
+            }
 
-                            // Capture until closing quote
-                            let mut string_content = String::new();
-                            let mut found_close = false;
-                            for ch in chars.by_ref() {
-                                if ch == '"' {
-                                    found_close = true;
-                                    break;
-                                }
-                                string_content.push(ch);
-                            }
+            let current_byte = self.input.as_bytes()[self.pos];
 
-                            if found_close {
-                                // Push the string content as a token (without quotes)
-                                tokens.push(string_content);
-                            }
-                        } else if current_token == ".(" {
-                            tokens.push(current_token.clone());
-                            current_token.clear();
+            // Check for special two-character tokens BEFORE treating ( as comment
+            if self.pos + 1 < self.input.len() {
+                let next_byte = self.input.as_bytes()[self.pos + 1];
 
-                            // Capture until closing paren
-                            let mut string_content = String::new();
-                            let mut found_close = false;
-                            for ch in chars.by_ref() {
-                                if ch == ')' {
-                                    found_close = true;
-                                    break;
-                                }
-                                string_content.push(ch);
-                            }
-
-                            if found_close {
-                                // Push the string content as a token (without parens)
-                                tokens.push(string_content);
-                            }
-                        } else {
-                            tokens.push(current_token.clone());
-                            current_token.clear();
-                        }
-                    }
+                // .( is a word, not a comment
+                if current_byte == b'.' && next_byte == b'(' {
+                    let token = ".(".to_string();
+                    self.pos += 2;
+                    self.sync_to_in();
+                    return Ok(Some(token));
                 }
 
-                // Parenthesis comment (but not .( which is handled elsewhere)
-                '(' => {
-                    // Check if this is .( - if so, don't treat as comment
-                    if current_token == "." {
-                        current_token.push(ch);
-                    } else {
-                        // Save current token if any
-                        if !current_token.is_empty() {
-                            tokens.push(current_token.clone());
-                            current_token.clear();
-                        }
-                        // Skip until closing paren
-                        for ch in chars.by_ref() {
-                            if ch == ')' {
-                                break;
-                            }
-                        }
-                    }
+                // ." is a word
+                if current_byte == b'.' && next_byte == b'"' {
+                    let token = ".\"".to_string();
+                    self.pos += 2;
+                    self.sync_to_in();
+                    return Ok(Some(token));
                 }
 
-                // Backslash comment (rest of line)
-                '\\' => {
-                    if current_token.is_empty() || chars.peek() == Some(&' ') {
-                        // It's a comment, not part of a word
-                        if !current_token.is_empty() {
-                            tokens.push(current_token.clone());
-                            current_token.clear();
-                        }
-                        // Skip rest of line
-                        for ch in chars.by_ref() {
-                            if ch == '\n' {
-                                break;
-                            }
-                        }
-                    } else {
-                        // Part of a word
-                        current_token.push(ch);
-                    }
+                // S" is a word
+                if (current_byte == b'S' || current_byte == b's') && next_byte == b'"' {
+                    let token = "S\"".to_string();
+                    self.pos += 2;
+                    self.sync_to_in();
+                    return Ok(Some(token));
                 }
+            }
 
-                // Regular character
-                _ => {
-                    current_token.push(ch);
+            // ( is a comment (now that we've ruled out .( )
+            if current_byte == b'(' {
+                self.pos += 1;
+                // Skip until closing )
+                while self.pos < self.input.len() && self.input.as_bytes()[self.pos] != b')' {
+                    self.pos += 1;
                 }
+                if self.pos < self.input.len() {
+                    self.pos += 1; // Skip )
+                }
+                continue; // Loop to skip more whitespace/comments
+            }
+
+            // Not whitespace or comment - ready to parse token
+            break;
+        }
+
+        // Parse regular token until whitespace
+        let start = self.pos;
+        while self.pos < self.input.len() && !self.input.as_bytes()[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+
+        let token = self.input[start..self.pos].to_uppercase();
+
+        // Skip trailing whitespace so >IN points to the start of the next token
+        while self.pos < self.input.len() && self.input.as_bytes()[self.pos].is_ascii_whitespace() {
+            self.pos += 1;
+        }
+
+        self.sync_to_in();
+
+        Ok(Some(token))
+    }
+
+    /// Process a single line of Forth source code
+    /// Each line gets its own INPUT_BUFFER and >IN context
+    /// NOTE: Comments should already be stripped by caller
+    pub fn process_line(&mut self, line: &str) -> Result<(), String> {
+        // Skip empty lines
+        if line.trim().is_empty() {
+            return Ok(());
+        }
+
+        // === RESET PER-LINE STATE ===
+        self.input = line.to_string();
+        self.pos = 0;
+
+        // Store line in INPUT_BUFFER and reset >IN to 0
+        self.interpreter.vm.set_input(line);
+
+        // Sync pos with >IN (should be 0 after set_input)
+        self.sync_pos_from_to_in();
+
+        // === PROCESS TOKENS ===
+        // Process tokens one at a time, allowing >IN manipulation between tokens
+        loop {
+            // Parse next token from input using >IN
+            let token = match self.next_token()? {
+                Some(t) => t,
+                None => break, // End of input
+            };
+
+            // In interpret mode with no definitions, execute immediately
+            if self.state == CompileState::Interpret {
+                let start_addr = self.bytecode.len();
+                self.process_token(&token)?;
+                self.emit(Instruction::Return);
+                self.interpreter.execute(&self.bytecode, start_addr)?;
+                self.bytecode.truncate(start_addr);
+            } else {
+                // In compile mode, just process the token (adds to bytecode)
+                self.process_token(&token)?;
             }
         }
 
-        // Don't forget last token
-        if !current_token.is_empty() {
-            tokens.push(current_token);
-        }
-
-        tokens
+        Ok(())
     }
 
-    /// Process Forth source code
+    /// Strip backslash comments from a line (\ comments only)
+    /// Parenthetical comments are handled by the tokenizer
+    fn strip_backslash_comments(line: &str) -> &str {
+        // Find \ at start or preceded by whitespace
+        if let Some(pos) = line.find('\\') {
+            if pos == 0 || line[..pos].ends_with(char::is_whitespace) {
+                return &line[..pos];
+            }
+        }
+        line
+    }
+
+    /// Check if a line starts a definition
+    fn starts_definition(line: &str) -> bool {
+        let trimmed = line.trim_start();
+        trimmed.starts_with(": ") || trimmed.starts_with(":\t")
+    }
+
+    /// Process Forth source code (multi-line)
+    /// Processes line-by-line, each with its own >IN context
+    /// Accumulates lines when inside a definition (between : and ;)
     pub fn process_source(&mut self, source: &str) -> Result<(), String> {
-        self.token_stream = Self::tokenize(source);
-        self.token_index = 0;
+        // Reset >IN at the start of processing new source (important for INCLUDE)
+        let to_in_bytes = 0i64.to_le_bytes();
+        self.interpreter.vm.memory[crate::primitives::TO_IN_ADDR..crate::primitives::TO_IN_ADDR + 8]
+            .copy_from_slice(&to_in_bytes);
 
-        // Check if source contains definition keywords
-        let tokens_upper: Vec<String> = self.token_stream.iter()
-            .map(|t| t.to_uppercase())
-            .collect();
-        let has_definitions = tokens_upper.contains(&":".to_string())
-            || tokens_upper.contains(&"VARIABLE".to_string())
-            || tokens_upper.contains(&"CONSTANT".to_string());
+        let mut accumulated = String::new();
+        let mut in_definition = false;
 
-        // If no definitions, execute immediately
-        let execute_immediately = self.state == CompileState::Interpret && !has_definitions;
-        let start_addr = if execute_immediately {
-            self.bytecode.len()
-        } else {
-            0
-        };
+        for line in source.lines() {
+            // Strip backslash comments only
+            let line = Self::strip_backslash_comments(line);
 
-        while self.token_index < self.token_stream.len() {
-            let token = self.token_stream[self.token_index].clone();
-            self.token_index += 1;
-            self.process_token(&token)?;
+            // Skip empty lines when not in definition
+            if line.trim().is_empty() && !in_definition {
+                continue;
+            }
+
+            // Check if line contains : or ;
+            let has_colon = Self::starts_definition(line);
+            let has_semicolon = line.contains(';');
+
+            if in_definition {
+                // Accumulate this line
+                accumulated.push(' ');
+                accumulated.push_str(line);
+
+                // Check if definition ends
+                if has_semicolon {
+                    in_definition = false;
+                    // Process the complete definition
+                    self.process_line(&accumulated)?;
+                    accumulated.clear();
+                }
+            } else if has_colon && !has_semicolon {
+                // Start of multi-line definition
+                in_definition = true;
+                accumulated = line.to_string();
+            } else {
+                // Single line - process immediately
+                self.process_line(line)?;
+            }
         }
 
-        // If we compiled for immediate execution, add Return and execute
-        if execute_immediately {
-            self.emit(Instruction::Return);
-            self.interpreter.execute(&self.bytecode, start_addr)?;
-            // Remove the temporary bytecode
-            self.bytecode.truncate(start_addr);
+        // If we're still in a definition at end, that's an error
+        if in_definition {
+            return Err("Unterminated definition".to_string());
         }
 
         Ok(())
@@ -928,12 +1011,9 @@ impl BytecodeCompiler {
 
     /// CHAR - Get ASCII value of next character
     fn immediate_char(&mut self) -> Result<(), String> {
-        if self.token_index >= self.token_stream.len() {
-            return Err("CHAR: unexpected end of input".to_string());
-        }
-
-        let next_token = self.token_stream[self.token_index].clone();
-        self.token_index += 1;
+        // Get next token from input
+        let next_token = self.next_token()?
+            .ok_or("CHAR: unexpected end of input".to_string())?;
 
         let ch = next_token.chars().next()
             .ok_or("CHAR: empty token".to_string())?;
@@ -950,13 +1030,22 @@ impl BytecodeCompiler {
 
     /// .( - Print message immediately (like ." but always immediate)
     fn immediate_dot_paren(&mut self) -> Result<(), String> {
-        // Get the string content from the next token
-        // The tokenizer should have captured text up to the closing paren
-        if self.token_index >= self.token_stream.len() {
-            return Err(".( missing message".to_string());
+        // Parse text from current input until closing )
+        // Note: next_token already consumed the ".(" token and updated pos
+        self.sync_pos_from_to_in();
+
+        let start = self.pos;
+        while self.pos < self.input.len() && self.input.as_bytes()[self.pos] != b')' {
+            self.pos += 1;
         }
-        let text = self.token_stream[self.token_index].clone();
-        self.token_index += 1;
+
+        if self.pos >= self.input.len() {
+            return Err(".( missing closing )".to_string());
+        }
+
+        let text = self.input[start..self.pos].to_string();
+        self.pos += 1; // Skip closing )
+        self.sync_to_in();
 
         // .( always prints immediately, regardless of state
         print!("{}", text);
@@ -965,12 +1054,18 @@ impl BytecodeCompiler {
 
     /// ." - Print string at compile time or runtime
     fn immediate_dot_quote(&mut self) -> Result<(), String> {
-        // Get the string content from the next token (tokenizer captured it)
-        if self.token_index >= self.token_stream.len() {
-            return Err(".\" missing string content".to_string());
+        // Parse string literal from current input
+        // Note: next_token already consumed the .\" token and updated pos
+        // Now we need to skip any whitespace and parse until closing "
+        self.sync_pos_from_to_in();
+
+        // Skip one space if present (standard delimiter after .")
+        if self.pos < self.input.len() && self.input.as_bytes()[self.pos] == b' ' {
+            self.pos += 1;
         }
-        let text = self.token_stream[self.token_index].clone();
-        self.token_index += 1;
+
+        let text = self.parse_string_literal()
+            .map_err(|_| ".\" missing closing quote".to_string())?;
 
         if self.state == CompileState::Compile {
             // Emit EMIT calls for each character
@@ -991,13 +1086,10 @@ impl BytecodeCompiler {
 
     /// ' (tick) - Get execution token of next word
     fn immediate_tick(&mut self) -> Result<(), String> {
-        // Get the next word name
-        if self.token_index >= self.token_stream.len() {
-            return Err("' (tick): unexpected end of input".to_string());
-        }
-
-        let word_name = self.token_stream[self.token_index].to_uppercase();
-        self.token_index += 1;
+        // Get the next word name from input
+        let word_name = self.next_token()?
+            .ok_or("' (tick): unexpected end of input".to_string())?
+            .to_uppercase();
 
         // Look up the word
         let word_info = self.dictionary.get(&word_name)
@@ -1096,9 +1188,11 @@ impl BytecodeCompiler {
     fn skip_until_else_or_then(&mut self) -> Result<(), String> {
         let mut depth = 1; // Track nesting level
 
-        while self.token_index < self.token_stream.len() && depth > 0 {
-            let token = self.token_stream[self.token_index].to_uppercase();
-            self.token_index += 1;
+        loop {
+            let token = match self.next_token()? {
+                Some(t) => t.to_uppercase(),
+                None => return Err("[IF] without matching [THEN]".to_string()),
+            };
 
             match token.as_str() {
                 "[IF]" => depth += 1,
@@ -1120,48 +1214,47 @@ impl BytecodeCompiler {
                 }
             }
         }
-
-        if depth > 0 {
-            Err("[IF] without matching [THEN]".to_string())
-        } else {
-            Ok(())
-        }
     }
 
     /// Skip tokens until matching [THEN], handling nested [IF]s
     fn skip_until_then(&mut self) -> Result<(), String> {
         let mut depth = 1; // Track nesting level
 
-        while self.token_index < self.token_stream.len() && depth > 0 {
-            let token = self.token_stream[self.token_index].to_uppercase();
-            self.token_index += 1;
+        loop {
+            let token = match self.next_token()? {
+                Some(t) => t.to_uppercase(),
+                None => return Err("[ELSE] without matching [THEN]".to_string()),
+            };
 
             match token.as_str() {
                 "[IF]" => depth += 1,
                 "[THEN]" => {
                     depth -= 1;
+                    if depth == 0 {
+                        return Ok(());
+                    }
                 }
                 _ => {
                     // Skip this token
                 }
             }
         }
-
-        if depth > 0 {
-            Err("[ELSE] without matching [THEN]".to_string())
-        } else {
-            Ok(())
-        }
     }
 
     /// S" - Create string literal (address and length on stack)
     fn immediate_s_quote(&mut self) -> Result<(), String> {
-        // Get the string content from the next token (tokenizer captured it)
-        if self.token_index >= self.token_stream.len() {
-            return Err("S\" missing string content".to_string());
+        // Parse string literal from current input
+        // Note: next_token already consumed the S" token and updated pos
+        // Now we need to skip any whitespace and parse until closing "
+        self.sync_pos_from_to_in();
+
+        // Skip one space if present (standard delimiter after S")
+        if self.pos < self.input.len() && self.input.as_bytes()[self.pos] == b' ' {
+            self.pos += 1;
         }
-        let text = self.token_stream[self.token_index].clone();
-        self.token_index += 1;
+
+        let text = self.parse_string_literal()
+            .map_err(|_| "S\" missing closing quote".to_string())?;
         let text_bytes = text.as_bytes();
 
         if self.state == CompileState::Compile {

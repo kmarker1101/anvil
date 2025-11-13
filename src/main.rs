@@ -161,8 +161,8 @@ fn main() -> Result<()> {
                     continue;
                 }
 
-                // Process Forth code
-                match compiler.process_source(input) {
+                // Process Forth code (single line)
+                match compiler.process_line(input) {
                     Ok(()) => {
                         println!(" ok");
                     }
