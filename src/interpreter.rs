@@ -273,6 +273,21 @@ impl Interpreter {
 
                     ip += 1;
                 }
+
+                Instruction::CompileCall(addr) => {
+                    // This instruction can only be executed at compile-time
+                    // It signals that compilation should happen
+                    // Store the address in pending_compile_call for the compiler to handle
+                    self.vm.pending_compile_call = Some(*addr);
+                    ip += 1;
+                }
+
+                Instruction::CompilePrimitive(prim) => {
+                    // This instruction can only be executed at compile-time
+                    // Store the primitive in pending_compile_primitive for the compiler to handle
+                    self.vm.pending_compile_primitive = Some(*prim);
+                    ip += 1;
+                }
             }
         }
     }

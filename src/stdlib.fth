@@ -71,8 +71,20 @@
 : 1+ ( n -- n+1 ) 1 + ;
 : 1- ( n -- n-1 ) 1 - ;
 : 2* ( n -- n*2 ) DUP + ;
-: 2/ ( n -- n/2 ) 2 / ;
-: */ ( n1 n2 n3 -- n4 ) >R * R> / ;
+\ 2/ must use arithmetic right shift (sign extension), not division
+\ Arithmetic right shift: shift right and replicate sign bit
+: 2/ ( n -- n/2 )
+  DUP 0 < IF
+    \ Negative: complement, shift, complement, and adjust
+    INVERT 1 RSHIFT INVERT
+  ELSE
+    \ Positive: just shift
+    1 RSHIFT
+  THEN ;
+\ */ uses double-cell intermediate to avoid overflow
+: */ ( n1 n2 n3 -- n4 ) >R M* R> SM/REM SWAP DROP ;
+: */MOD ( n1 n2 n3 -- rem quot ) >R M* R> SM/REM ;
+: /MOD ( n1 n2 -- rem quot ) 2DUP MOD -ROT / ;
 
 : ABS ( n -- |n| ) 
   DUP 0 < IF 0 SWAP - THEN ;
@@ -114,6 +126,9 @@
 \ Cell-based memory operations
 : CELLS ( n1 -- n2 ) 8 * ;        \ Size in bytes of n1 cells (64-bit cells)
 : CELL+ ( addr -- addr' ) 8 + ;   \ Add size of one cell to address
+: 2@ ( a-addr -- x1 x2 ) DUP CELL+ @ SWAP @ ;
+: 2! ( x1 x2 a-addr -- ) SWAP OVER ! CELL+ ! ;
+: ALIGN ( -- ) HERE ALIGNED HERE - ALLOT ;  \ Align HERE to cell boundary
 \ ALLOT is now a primitive
 \ : ALLOT ( n -- ) HERE @ + HERE ! ;  \ Allocate n bytes
 
@@ -178,6 +193,8 @@
 : ENDUNLESS
     THEN
 ; IMMEDIATE
+
+\ ['] is implemented as a compiler word in bytecode_compiler.rs
 
 \ ============================================================================
 \ ENVIRONMENT QUERIES

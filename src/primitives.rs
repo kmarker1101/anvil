@@ -16,6 +16,9 @@ pub const TO_IN_ADDR: usize = 0x108;
 /// Memory address for the HERE variable (dictionary/data space pointer)
 pub const HERE_ADDR: usize = 0x110;
 
+/// Memory address for the STATE variable (0 = interpret, non-zero = compile)
+pub const STATE_ADDR: usize = 0x118;
+
 /// Memory address for the input buffer (SOURCE returns this address)
 pub const INPUT_BUFFER_ADDR: usize = 0x200;
 
@@ -169,6 +172,7 @@ pub enum ForthError {
     ReturnStackUnderflow,
     DivisionByZero,
     InvalidMemoryAddress,
+    InvalidShiftAmount,
     IoError(String),
 }
 
@@ -179,6 +183,7 @@ impl std::fmt::Display for ForthError {
             ForthError::ReturnStackUnderflow => write!(f, "Return stack underflow"),
             ForthError::DivisionByZero => write!(f, "Division by zero"),
             ForthError::InvalidMemoryAddress => write!(f, "Invalid memory address"),
+            ForthError::InvalidShiftAmount => write!(f, "Invalid shift amount"),
             ForthError::IoError(msg) => write!(f, "I/O error: {}", msg),
         }
     }
@@ -258,10 +263,14 @@ define_primitives! {
     CStore => "C!": "C! ( c addr -- ) Store byte to memory" => op_c_store,
     Here => "HERE": "HERE ( -- addr ) Get dictionary pointer" => op_here,
     Allot => "ALLOT": "ALLOT ( n -- ) Allocate n bytes in data space" => op_allot,
+    Comma => ",": ", ( x -- ) Store cell at HERE and advance HERE" => op_comma,
+    CComma => "C,": "C, ( char -- ) Store byte at HERE and advance HERE" => op_c_comma,
+    Aligned => "ALIGNED": "ALIGNED ( addr -- a-addr ) Align address to cell boundary" => op_aligned,
     CharPlus => "CHAR+": "CHAR+ ( c-addr1 -- c-addr2 ) Add character size to address" => op_char_plus,
     Chars => "CHARS": "CHARS ( n1 -- n2 ) Size in address units of n1 characters" => op_chars,
     Base => "BASE": "BASE ( -- a-addr ) Address of cell containing current number-conversion radix" => op_base,
     ToIn => ">IN": ">IN ( -- a-addr ) Address of cell containing parse position" => op_to_in,
+    State => "STATE": "STATE ( -- a-addr ) Address of cell containing compilation state" => op_state,
     Source => "SOURCE": "SOURCE ( -- c-addr u ) Address and length of input buffer" => op_source,
     Word => "WORD": "WORD ( char -- c-addr ) Parse word delimited by char, return counted string" => op_word,
     Parse => "PARSE": "PARSE ( char -- c-addr u ) Parse string delimited by char" => op_parse,
@@ -287,17 +296,25 @@ define_primitives! {
     Mul => "*": "* ( a b -- c ) Multiplication" => op_mul,
     Div => "/": "/ ( a b -- c ) Division" => op_div,
     Mod => "MOD": "MOD ( a b -- c ) Modulo" => op_mod,
+    MStar => "M*": "M* ( n1 n2 -- d ) Signed multiply to double-cell result" => op_m_star,
+    UMStar => "UM*": "UM* ( u1 u2 -- ud ) Unsigned multiply to double-cell result" => op_um_star,
+    FmSlashMod => "FM/MOD": "FM/MOD ( d n -- rem quot ) Floored division of double by single" => op_fm_slash_mod,
+    SmSlashRem => "SM/REM": "SM/REM ( d n -- rem quot ) Symmetric division of double by single" => op_sm_slash_rem,
+    UmSlashMod => "UM/MOD": "UM/MOD ( ud u -- rem quot ) Unsigned division of double by single" => op_um_slash_mod,
 
     // Comparison
     Equals => "=": "= ( a b -- flag ) Equality test" => op_equals,
     Less => "<": "< ( a b -- flag ) Less than test" => op_less,
     Greater => ">": "> ( a b -- flag ) Greater than test" => op_greater,
+    ULess => "U<": "U< ( u1 u2 -- flag ) Unsigned less than test" => op_u_less,
 
     // Logical
     And => "AND": "AND ( a b -- c ) Bitwise AND" => op_and,
     Or => "OR": "OR ( a b -- c ) Bitwise OR" => op_or,
     Xor => "XOR": "XOR ( a b -- c ) Bitwise XOR" => op_xor,
     Invert => "INVERT": "INVERT ( n -- ~n ) Bitwise NOT" => op_invert,
+    Lshift => "LSHIFT": "LSHIFT ( x1 u -- x2 ) Logical left shift by u bits" => op_lshift,
+    Rshift => "RSHIFT": "RSHIFT ( x1 u -- x2 ) Logical right shift by u bits" => op_rshift,
 
     // I/O
     Emit => "EMIT": "EMIT ( c -- ) Output character" => op_emit,
@@ -324,6 +341,8 @@ pub struct VM {
     pub loop_stack: Stack, // For DO/LOOP: stores current index and limit
     pub here: usize,       // Dictionary pointer for string allocation
     pub input_length: usize, // Length of current input in buffer
+    pub pending_compile_call: Option<usize>, // For POSTPONE: address to compile as Call
+    pub pending_compile_primitive: Option<Primitive>, // For POSTPONE: primitive to compile
 }
 
 impl Default for VM {
@@ -341,6 +360,8 @@ impl VM {
             loop_stack: Stack::new(),
             here: 0x4000, // Start string allocation at 16KB
             input_length: 0,
+            pending_compile_call: None,
+            pending_compile_primitive: None,
         };
 
         // Initialize BASE to 10 (decimal)
@@ -476,6 +497,61 @@ impl VM {
         Ok(())
     }
 
+    fn op_comma(&mut self) -> Result<(), ForthError> {
+        // , ( x -- )
+        // Store cell at HERE and advance HERE by 8 bytes
+        let value = self.data_stack.pop()?;
+
+        if self.here + 8 > self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+
+        // Store the value at HERE
+        let bytes = value.to_le_bytes();
+        self.memory[self.here..self.here + 8].copy_from_slice(&bytes);
+
+        // Advance HERE by 8 bytes (cell size)
+        self.here += 8;
+
+        // Sync to memory
+        let here_bytes = (self.here as i64).to_le_bytes();
+        self.memory[HERE_ADDR..HERE_ADDR + 8].copy_from_slice(&here_bytes);
+
+        Ok(())
+    }
+
+    fn op_c_comma(&mut self) -> Result<(), ForthError> {
+        // C, ( char -- )
+        // Store byte at HERE and advance HERE by 1 byte
+        let value = self.data_stack.pop()? as u8;
+
+        if self.here >= self.memory.len() {
+            return Err(ForthError::InvalidMemoryAddress);
+        }
+
+        // Store the byte at HERE
+        self.memory[self.here] = value;
+
+        // Advance HERE by 1 byte
+        self.here += 1;
+
+        // Sync to memory
+        let here_bytes = (self.here as i64).to_le_bytes();
+        self.memory[HERE_ADDR..HERE_ADDR + 8].copy_from_slice(&here_bytes);
+
+        Ok(())
+    }
+
+    fn op_aligned(&mut self) -> Result<(), ForthError> {
+        // ALIGNED ( addr -- a-addr )
+        // Align address to cell boundary (8 bytes for 64-bit cells)
+        let addr = self.data_stack.pop()?;
+        // Round up to next multiple of 8
+        let aligned = ((addr + 7) / 8) * 8;
+        self.data_stack.push(aligned);
+        Ok(())
+    }
+
     fn op_char_plus(&mut self) -> Result<(), ForthError> {
         // CHAR+ ( c-addr1 -- c-addr2 )
         let addr = self.data_stack.pop()?;
@@ -503,6 +579,14 @@ impl VM {
         // >IN ( -- a-addr )
         // Push the address of the >IN variable onto the stack
         self.data_stack.push(TO_IN_ADDR as i64);
+        Ok(())
+    }
+
+    fn op_state(&mut self) -> Result<(), ForthError> {
+        // STATE ( -- a-addr )
+        // Push the address of the STATE variable onto the stack
+        // STATE is 0 when interpreting, non-zero when compiling
+        self.data_stack.push(STATE_ADDR as i64);
         Ok(())
     }
 
@@ -843,6 +927,132 @@ impl VM {
         Ok(())
     }
 
+    fn op_m_star(&mut self) -> Result<(), ForthError> {
+        // M* ( n1 n2 -- d-lo d-hi )
+        // Signed multiply returning double-cell result
+        // d-lo is the low-order cell, d-hi is the high-order cell
+        let n2 = self.data_stack.pop()?;
+        let n1 = self.data_stack.pop()?;
+
+        // Use i128 for the calculation to get the full 128-bit result
+        let result = (n1 as i128) * (n2 as i128);
+
+        // Split into low and high 64-bit words
+        let lo = result as i64;
+        let hi = (result >> 64) as i64;
+
+        // Push in Forth double-cell order: low cell first, then high cell
+        self.data_stack.push(lo);
+        self.data_stack.push(hi);
+        Ok(())
+    }
+
+    fn op_um_star(&mut self) -> Result<(), ForthError> {
+        // UM* ( u1 u2 -- ud-lo ud-hi )
+        // Unsigned multiply returning double-cell result
+        let u2 = self.data_stack.pop()? as u64;
+        let u1 = self.data_stack.pop()? as u64;
+
+        // Use u128 for the calculation to get the full 128-bit result
+        let result = (u1 as u128) * (u2 as u128);
+
+        // Split into low and high 64-bit words
+        let lo = result as i64;
+        let hi = (result >> 64) as i64;
+
+        // Push in Forth double-cell order: low cell first, then high cell
+        self.data_stack.push(lo);
+        self.data_stack.push(hi);
+        Ok(())
+    }
+
+    fn op_fm_slash_mod(&mut self) -> Result<(), ForthError> {
+        // FM/MOD ( d-lo d-hi n -- rem quot )
+        // Floored division: divide double-cell d by single-cell n
+        // Returns remainder and quotient where the quotient is floored (rounds toward -infinity)
+        let n = self.data_stack.pop()?;
+        let d_hi = self.data_stack.pop()?;
+        let d_lo = self.data_stack.pop()?;
+
+        if n == 0 {
+            return Err(ForthError::DivisionByZero);
+        }
+
+        // Reconstruct the double-cell number as i128
+        let d = ((d_hi as i128) << 64) | ((d_lo as u64) as i128);
+        let n = n as i128;
+
+        // Floored division: quotient rounds toward negative infinity
+        // This is different from truncated division (which rounds toward zero)
+        let mut quot = d / n;
+        let mut rem = d % n;
+
+        // Adjust for floored division semantics:
+        // If remainder is non-zero and has opposite sign from divisor, adjust
+        if rem != 0 && (rem < 0) != (n < 0) {
+            quot -= 1;
+            rem += n;
+        }
+
+        // Push remainder first, then quotient
+        self.data_stack.push(rem as i64);
+        self.data_stack.push(quot as i64);
+        Ok(())
+    }
+
+    fn op_sm_slash_rem(&mut self) -> Result<(), ForthError> {
+        // SM/REM ( d-lo d-hi n -- rem quot )
+        // Symmetric division: divide double-cell d by single-cell n
+        // Returns remainder and quotient where division rounds toward zero (truncated division)
+        // Remainder has the same sign as the dividend
+        let n = self.data_stack.pop()?;
+        let d_hi = self.data_stack.pop()?;
+        let d_lo = self.data_stack.pop()?;
+
+        if n == 0 {
+            return Err(ForthError::DivisionByZero);
+        }
+
+        // Reconstruct the double-cell number as i128
+        let d = ((d_hi as i128) << 64) | ((d_lo as u64) as i128);
+        let n = n as i128;
+
+        // Symmetric (truncated) division: quotient rounds toward zero
+        // This is the default behavior of Rust's / and % operators
+        let quot = d / n;
+        let rem = d % n;
+
+        // Push remainder first, then quotient
+        self.data_stack.push(rem as i64);
+        self.data_stack.push(quot as i64);
+        Ok(())
+    }
+
+    fn op_um_slash_mod(&mut self) -> Result<(), ForthError> {
+        // UM/MOD ( ud-lo ud-hi u -- rem quot )
+        // Unsigned division: divide unsigned double-cell ud by unsigned single-cell u
+        let u = self.data_stack.pop()? as u64;
+        let ud_hi = self.data_stack.pop()? as u64;
+        let ud_lo = self.data_stack.pop()? as u64;
+
+        if u == 0 {
+            return Err(ForthError::DivisionByZero);
+        }
+
+        // Reconstruct the double-cell unsigned number as u128
+        let ud = ((ud_hi as u128) << 64) | (ud_lo as u128);
+        let u = u as u128;
+
+        // Unsigned division
+        let quot = ud / u;
+        let rem = ud % u;
+
+        // Push remainder first, then quotient
+        self.data_stack.push(rem as i64);
+        self.data_stack.push(quot as i64);
+        Ok(())
+    }
+
     // ========================================================================
     // COMPARISON
     // ========================================================================
@@ -868,6 +1078,15 @@ impl VM {
         let b = self.data_stack.pop()?;
         let a = self.data_stack.pop()?;
         self.data_stack.push(if a > b { -1 } else { 0 });
+        Ok(())
+    }
+
+    fn op_u_less(&mut self) -> Result<(), ForthError> {
+        // U< ( u1 u2 -- flag )
+        // Unsigned less than comparison
+        let u2 = self.data_stack.pop()? as u64;
+        let u1 = self.data_stack.pop()? as u64;
+        self.data_stack.push(if u1 < u2 { -1 } else { 0 });
         Ok(())
     }
 
@@ -903,6 +1122,40 @@ impl VM {
         // INVERT ( n -- ~n )
         let value = self.data_stack.pop()?;
         self.data_stack.push(!value);
+        Ok(())
+    }
+
+    fn op_lshift(&mut self) -> Result<(), ForthError> {
+        // LSHIFT ( x1 u -- x2 )
+        // Logical left shift x1 by u bits
+        let u = self.data_stack.pop()?;
+        let x1 = self.data_stack.pop()?;
+
+        // Check for ambiguous condition: shift amount >= number of bits in a cell
+        if u < 0 || u >= 64 {
+            return Err(ForthError::InvalidShiftAmount);
+        }
+
+        // Perform logical left shift (works on the bit pattern regardless of sign)
+        let result = (x1 as u64).wrapping_shl(u as u32) as i64;
+        self.data_stack.push(result);
+        Ok(())
+    }
+
+    fn op_rshift(&mut self) -> Result<(), ForthError> {
+        // RSHIFT ( x1 u -- x2 )
+        // Logical right shift x1 by u bits (fills with zeros)
+        let u = self.data_stack.pop()?;
+        let x1 = self.data_stack.pop()?;
+
+        // Check for ambiguous condition: shift amount >= number of bits in a cell
+        if u < 0 || u >= 64 {
+            return Err(ForthError::InvalidShiftAmount);
+        }
+
+        // Perform logical right shift (unsigned shift, fills with zeros)
+        let result = (x1 as u64).wrapping_shr(u as u32) as i64;
+        self.data_stack.push(result);
         Ok(())
     }
 

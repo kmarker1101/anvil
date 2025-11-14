@@ -145,6 +145,18 @@ impl BytecodeCompiler {
         self.pos = i64::from_le_bytes(to_in_bytes) as usize;
     }
 
+    /// Sync STATE variable in memory to match self.state
+    fn sync_state_to_memory(&mut self) {
+        let state_value = match self.state {
+            CompileState::Interpret => 0i64,
+            CompileState::Compile => -1i64,  // Non-zero (use -1 as Forth convention)
+            _ => 0i64,  // Other states count as interpret mode
+        };
+        let state_bytes = state_value.to_le_bytes();
+        self.interpreter.vm.memory[crate::primitives::STATE_ADDR..
+            crate::primitives::STATE_ADDR + 8].copy_from_slice(&state_bytes);
+    }
+
     /// Parse a string literal from the current input line
     /// Used for S" and ." words
     fn parse_string_literal(&mut self) -> Result<String, String> {
@@ -426,6 +438,10 @@ impl BytecodeCompiler {
         match word_upper.as_str() {
             ":" => self.begin_definition(),
             ";" => self.end_definition(),
+            "[" => self.left_bracket(),
+            "]" => self.right_bracket(),
+            "LITERAL" => self.immediate_literal(),
+            "POSTPONE" => self.immediate_postpone(),
             "IF" => self.immediate_if(),
             "THEN" => self.immediate_then(),
             "ELSE" => self.immediate_else(),
@@ -446,6 +462,7 @@ impl BytecodeCompiler {
             "CREATE" => self.begin_create(),
             "CHAR" => self.immediate_char(),
             "[CHAR]" => self.immediate_bracket_char(),
+            "[']" => self.immediate_bracket_tick(),
             "FIND" => self.compile_or_execute_find(),
             ".\"" => self.immediate_dot_quote(),
             ".(" => self.immediate_dot_paren(),
@@ -469,6 +486,15 @@ impl BytecodeCompiler {
                         && self.state == CompileState::Compile {
                             // Execute the word immediately by running its bytecode
                             self.interpreter.execute(&self.bytecode, address)?;
+
+                            // Check if the word set pending compilation requests (for POSTPONE)
+                            if let Some(call_addr) = self.interpreter.vm.pending_compile_call.take() {
+                                self.emit(Instruction::Call(call_addr));
+                            }
+                            if let Some(prim) = self.interpreter.vm.pending_compile_primitive.take() {
+                                self.emit(Instruction::Primitive(prim));
+                            }
+
                             return Ok(());
                         }
                     // Process word (compile or execute based on state)
@@ -488,6 +514,7 @@ impl BytecodeCompiler {
             return Err("Cannot nest definitions".to_string());
         }
         self.state = CompileState::Compile;
+        self.sync_state_to_memory();
         self.current_word_name = None;
         self.current_word_start = self.here();
         Ok(())
@@ -496,6 +523,96 @@ impl BytecodeCompiler {
     /// Set the name for current definition
     fn set_definition_name(&mut self, name: &str) -> Result<(), String> {
         self.current_word_name = Some(name.to_string());
+        Ok(())
+    }
+
+    /// Left bracket - switch to interpret mode (IMMEDIATE word)
+    fn left_bracket(&mut self) -> Result<(), String> {
+        if self.state != CompileState::Compile {
+            return Err("[ used outside of definition".to_string());
+        }
+        // Switch to interpret mode temporarily
+        self.state = CompileState::Interpret;
+        self.sync_state_to_memory();
+        Ok(())
+    }
+
+    /// Right bracket - switch back to compile mode
+    fn right_bracket(&mut self) -> Result<(), String> {
+        if self.state != CompileState::Interpret {
+            return Err("] used outside of interpretation".to_string());
+        }
+        // Switch back to compile mode
+        self.state = CompileState::Compile;
+        self.sync_state_to_memory();
+        Ok(())
+    }
+
+    /// LITERAL - compile a value from the stack as a literal (IMMEDIATE word)
+    fn immediate_literal(&mut self) -> Result<(), String> {
+        // LITERAL should only be used in compile mode (typically after [)
+        if self.state != CompileState::Compile {
+            return Err("LITERAL can only be used in compile mode".to_string());
+        }
+
+        // Pop value from data stack
+        let value = self.interpreter.vm.data_stack.pop()
+            .map_err(|e| format!("LITERAL: stack underflow: {:?}", e))?;
+
+        // Compile it as a literal
+        self.emit(Instruction::PushLiteral(value));
+        Ok(())
+    }
+
+    /// POSTPONE - postpone compilation of the next word (IMMEDIATE word)
+    fn immediate_postpone(&mut self) -> Result<(), String> {
+        // POSTPONE should only be used in compile mode
+        if self.state != CompileState::Compile {
+            return Err("POSTPONE can only be used in compile mode".to_string());
+        }
+
+        // Get next word from input
+        let next_word = self.next_token()?
+            .ok_or("POSTPONE: expected word name")?
+            .to_uppercase();
+
+        // Look up the word in dictionary
+        let word_info = self.dictionary.get(&next_word)
+            .ok_or(format!("POSTPONE: unknown word: {}", next_word))?
+            .clone();
+
+        match word_info {
+            WordInfo::UserDefined { address, is_immediate, .. } => {
+                if is_immediate {
+                    // For immediate words, compile a call to them
+                    // (they will execute at run-time, not compile-time)
+                    self.emit(Instruction::Call(address));
+                } else {
+                    // For non-immediate words, compile a CompileCall instruction
+                    // When executed (e.g., in an immediate word), it will compile a Call
+                    self.emit(Instruction::CompileCall(address));
+                }
+            }
+            WordInfo::Primitive { name } => {
+                // Compile a CompilePrimitive instruction
+                let prim = crate::primitives::Primitive::from_name(&name)
+                    .ok_or(format!("POSTPONE: primitive not found: {}", name))?;
+                self.emit(Instruction::CompilePrimitive(prim));
+            }
+            WordInfo::Variable { offset, .. } => {
+                // Compile pushing the variable address
+                self.emit(Instruction::PushLiteral(offset as i64));
+            }
+            WordInfo::Constant { value, .. } => {
+                // Compile the constant value
+                self.emit(Instruction::PushLiteral(value));
+            }
+            WordInfo::Created { data_offset, .. } => {
+                // Compile pushing the data address
+                self.emit(Instruction::PushLiteral(data_offset as i64));
+            }
+        }
+
         Ok(())
     }
 
@@ -531,6 +648,7 @@ impl BytecodeCompiler {
 
         // Reset state
         self.state = CompileState::Interpret;
+        self.sync_state_to_memory();
         self.current_word_tokens.clear();
         self.last_defined_word = Some(word_name);
 
@@ -1022,6 +1140,40 @@ impl BytecodeCompiler {
 
         // Always compile the character literal
         self.emit(Instruction::PushLiteral(char_code));
+
+        Ok(())
+    }
+
+    /// ['] - Compile-time tick (immediate word)
+    /// Parse next word and compile its execution token as a literal
+    fn immediate_bracket_tick(&mut self) -> Result<(), String> {
+        // ['] can only be used in compilation mode
+        if self.state != CompileState::Compile {
+            return Err("['] can only be used inside a definition".to_string());
+        }
+
+        // Get next token from input
+        let next_token = self.next_token()?
+            .ok_or("[']: unexpected end of input".to_string())?
+            .to_uppercase();
+
+        // Look up the word and get its XT
+        let word_info = self.dictionary.get(&next_token)
+            .ok_or(format!("[']: unknown word: {}", next_token))?
+            .clone();
+
+        let xt = match word_info {
+            WordInfo::UserDefined { address, .. } => address as i64,
+            WordInfo::Primitive { .. } => {
+                return Err(format!("[']: word {} is not user-defined", next_token));
+            }
+            WordInfo::Variable { .. } | WordInfo::Constant { .. } | WordInfo::Created { .. } => {
+                return Err(format!("[']: word {} is not user-defined", next_token));
+            }
+        };
+
+        // Compile the XT as a literal
+        self.emit(Instruction::PushLiteral(xt));
 
         Ok(())
     }

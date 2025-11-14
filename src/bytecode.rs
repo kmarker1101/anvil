@@ -53,6 +53,13 @@ pub enum Instruction {
     /// Find word in dictionary: ( c-addr -- c-addr 0 | xt 1 | xt -1 )
     /// Includes snapshot of user-defined words (name -> (address, is_immediate))
     FindWord(std::collections::HashMap<String, (usize, bool)>),
+
+    /// Compile a Call instruction into the current definition (for POSTPONE)
+    /// Used by POSTPONE to defer compilation behavior
+    CompileCall(usize),
+
+    /// Compile a Primitive instruction into the current definition (for POSTPONE)
+    CompilePrimitive(Primitive),
 }
 
 /// A compiled word consists of bytecode instructions
