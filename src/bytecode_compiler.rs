@@ -83,6 +83,9 @@ pub struct BytecodeCompiler {
     /// Control flow stack for backpatching
     control_stack: Vec<ControlFrame>,
 
+    /// Conditional compilation: depth of [IF] skipping (0 = not skipping)
+    conditional_skip_depth: usize,
+
     // === PER-LINE STATE (reset at start of each line) ===
     /// Current line being processed
     input: String,
@@ -104,6 +107,7 @@ impl BytecodeCompiler {
             current_word_tokens: Vec::new(),
             last_defined_word: None,
             control_stack: Vec::new(),
+            conditional_skip_depth: 0,
             input: String::new(),
             pos: 0,
         };
@@ -277,20 +281,19 @@ impl BytecodeCompiler {
 
         // === PROCESS TOKENS ===
         // Process tokens one at a time, allowing >IN manipulation between tokens
-        loop {
-            // Parse next token from input using >IN
-            let token = match self.next_token()? {
-                Some(t) => t,
-                None => break, // End of input
-            };
-
+        while let Some(token) = self.next_token()? {
             // In interpret mode with no definitions, execute immediately
             if self.state == CompileState::Interpret {
-                let start_addr = self.bytecode.len();
-                self.process_token(&token)?;
-                self.emit(Instruction::Return);
-                self.interpreter.execute(&self.bytecode, start_addr)?;
-                self.bytecode.truncate(start_addr);
+                // Special case: INCLUDED processes files and doesn't need bytecode execution
+                if token == "INCLUDED" {
+                    self.process_token(&token)?;
+                } else {
+                    let start_addr = self.bytecode.len();
+                    self.process_token(&token)?;
+                    self.emit(Instruction::Return);
+                    self.interpreter.execute(&self.bytecode, start_addr)?;
+                    self.bytecode.truncate(start_addr);
+                }
             } else {
                 // In compile mode, just process the token (adds to bytecode)
                 self.process_token(&token)?;
@@ -298,12 +301,6 @@ impl BytecodeCompiler {
         }
 
         Ok(())
-    }
-
-    /// Check if a line starts a definition
-    fn starts_definition(line: &str) -> bool {
-        let trimmed = line.trim_start();
-        trimmed.starts_with(": ") || trimmed.starts_with(":\t")
     }
 
     /// Process Forth source code (multi-line)
@@ -321,6 +318,12 @@ impl BytecodeCompiler {
 
             // Skip empty lines
             if line.trim().is_empty() {
+                continue;
+            }
+
+            // If we're skipping due to [IF], check this line for [IF]/[ELSE]/[THEN]
+            if self.conditional_skip_depth > 0 {
+                self.check_conditional_in_skipped_line(line)?;
                 continue;
             }
 
@@ -399,7 +402,7 @@ impl BytecodeCompiler {
             let base = i64::from_le_bytes(base_bytes) as u32;
 
             // Parse using current base (default 10)
-            i64::from_str_radix(&token, base)
+            i64::from_str_radix(token, base)
         };
 
         if let Ok(num) = num_result {
@@ -462,13 +465,12 @@ impl BytecodeCompiler {
                 // Look up word in dictionary
                 if let Some(word_info) = self.dictionary.get(&word_upper).cloned() {
                     // Check if IMMEDIATE word during compilation
-                    if let WordInfo::UserDefined { is_immediate: true, address, .. } = word_info {
-                        if self.state == CompileState::Compile {
+                    if let WordInfo::UserDefined { is_immediate: true, address, .. } = word_info
+                        && self.state == CompileState::Compile {
                             // Execute the word immediately by running its bytecode
                             self.interpreter.execute(&self.bytecode, address)?;
                             return Ok(());
                         }
-                    }
                     // Process word (compile or execute based on state)
                     self.process_word(&word_info, self.state == CompileState::Compile)
                 } else {
@@ -1195,14 +1197,55 @@ impl BytecodeCompiler {
         let filename = std::str::from_utf8(filename_bytes)
             .map_err(|e| format!("INCLUDED: invalid UTF-8: {}", e))?;
 
+        // === SAVE CURRENT INPUT SOURCE SPECIFICATION ===
+        // Save current input buffer contents
+        let saved_input_buffer = self.interpreter.vm.memory
+            [crate::primitives::INPUT_BUFFER_ADDR..
+             crate::primitives::INPUT_BUFFER_ADDR + crate::primitives::INPUT_BUFFER_SIZE]
+            .to_vec();
+
+        // Save current input_length
+        let saved_input_length = self.interpreter.vm.input_length;
+
+        // Save current >IN position
+        let mut saved_to_in_bytes = [0u8; 8];
+        saved_to_in_bytes.copy_from_slice(
+            &self.interpreter.vm.memory[crate::primitives::TO_IN_ADDR..
+                                       crate::primitives::TO_IN_ADDR + 8]
+        );
+
+        // Save current compiler state (input line and position)
+        let saved_compiler_input = self.input.clone();
+        let saved_compiler_pos = self.pos;
+
         // Load the file
         let contents = std::fs::read_to_string(filename)
             .map_err(|e| format!("INCLUDED: failed to read {}: {}", filename, e))?;
 
-        // Process it
-        self.process_source(&contents)?;
+        // Process the file
+        let result = self.process_source(&contents);
 
-        Ok(())
+        // === RESTORE INPUT SOURCE SPECIFICATION ===
+        // Restore input buffer contents
+        self.interpreter.vm.memory
+            [crate::primitives::INPUT_BUFFER_ADDR..
+             crate::primitives::INPUT_BUFFER_ADDR + crate::primitives::INPUT_BUFFER_SIZE]
+            .copy_from_slice(&saved_input_buffer);
+
+        // Restore input_length
+        self.interpreter.vm.input_length = saved_input_length;
+
+        // Restore >IN position
+        self.interpreter.vm.memory[crate::primitives::TO_IN_ADDR..
+                                   crate::primitives::TO_IN_ADDR + 8]
+            .copy_from_slice(&saved_to_in_bytes);
+
+        // Restore compiler state
+        self.input = saved_compiler_input;
+        self.pos = saved_compiler_pos;
+
+        // Return the result (propagate any errors from file processing)
+        result
     }
 
     /// EXECUTE - Execute an execution token from the stack
@@ -1229,9 +1272,9 @@ impl BytecodeCompiler {
         let flag = self.interpreter.vm.data_stack.pop()
             .map_err(|e| format!("[IF] requires a flag on the stack: {:?}", e))?;
 
-        // If flag is false (0), skip until matching [ELSE] or [THEN]
+        // If flag is false (0), start skipping lines
         if flag == 0 {
-            self.skip_until_else_or_then()?;
+            self.conditional_skip_depth = 1;
         }
         // If flag is true, continue processing normally
         Ok(())
@@ -1240,65 +1283,41 @@ impl BytecodeCompiler {
     /// [ELSE] - Skip to [THEN] (we're in the true branch, so skip the else part)
     fn conditional_else(&mut self) -> Result<(), String> {
         // If we encounter [ELSE] during normal processing, it means the [IF] was true
-        // So we skip the else branch
-        self.skip_until_then()
+        // So we start skipping the else branch
+        self.conditional_skip_depth = 1;
+        Ok(())
     }
 
-    /// Skip tokens until matching [ELSE] or [THEN], handling nested [IF]s
-    fn skip_until_else_or_then(&mut self) -> Result<(), String> {
-        let mut depth = 1; // Track nesting level
-
-        loop {
-            let token = match self.next_token()? {
-                Some(t) => t.to_uppercase(),
-                None => return Err("[IF] without matching [THEN]".to_string()),
-            };
-
-            match token.as_str() {
-                "[IF]" => depth += 1,
+    /// Check a skipped line for [IF]/[ELSE]/[THEN] to track nesting depth
+    fn check_conditional_in_skipped_line(&mut self, line: &str) -> Result<(), String> {
+        // Simple token-by-token scan to find [IF], [ELSE], [THEN]
+        // We need to track nesting but not execute anything
+        for word in line.split_whitespace() {
+            let word_upper = word.to_uppercase();
+            match word_upper.as_str() {
+                "[IF]" => {
+                    self.conditional_skip_depth += 1;
+                }
                 "[ELSE]" => {
-                    if depth == 1 {
-                        // Found matching [ELSE], stop skipping
+                    if self.conditional_skip_depth == 1 {
+                        // Found matching [ELSE], stop skipping and resume execution
+                        self.conditional_skip_depth = 0;
                         return Ok(());
                     }
                 }
                 "[THEN]" => {
-                    depth -= 1;
-                    if depth == 0 {
-                        // Found matching [THEN], stop skipping
+                    self.conditional_skip_depth -= 1;
+                    if self.conditional_skip_depth == 0 {
+                        // Found matching [THEN], resume execution
                         return Ok(());
                     }
                 }
                 _ => {
-                    // Skip this token
+                    // Skip other tokens
                 }
             }
         }
-    }
-
-    /// Skip tokens until matching [THEN], handling nested [IF]s
-    fn skip_until_then(&mut self) -> Result<(), String> {
-        let mut depth = 1; // Track nesting level
-
-        loop {
-            let token = match self.next_token()? {
-                Some(t) => t.to_uppercase(),
-                None => return Err("[ELSE] without matching [THEN]".to_string()),
-            };
-
-            match token.as_str() {
-                "[IF]" => depth += 1,
-                "[THEN]" => {
-                    depth -= 1;
-                    if depth == 0 {
-                        return Ok(());
-                    }
-                }
-                _ => {
-                    // Skip this token
-                }
-            }
-        }
+        Ok(())
     }
 
     /// S" - Create string literal (address and length on stack)
