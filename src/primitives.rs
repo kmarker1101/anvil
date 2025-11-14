@@ -324,6 +324,7 @@ define_primitives! {
 
     // Loop
     I => "I": "I ( -- n ) Get current loop index" => op_i,
+    J => "J": "J ( -- n ) Get outer loop index" => op_j,
     Unloop => "UNLOOP": "UNLOOP ( -- ) Discard loop control parameters" => op_unloop,
 
     // Stack inspection
@@ -343,6 +344,7 @@ pub struct VM {
     pub input_length: usize, // Length of current input in buffer
     pub pending_compile_call: Option<usize>, // For POSTPONE: address to compile as Call
     pub pending_compile_primitive: Option<Primitive>, // For POSTPONE: primitive to compile
+    pub pending_constant_def: Option<(String, i64)>, // For DefineConstant: (name, value)
 }
 
 impl Default for VM {
@@ -362,6 +364,7 @@ impl VM {
             input_length: 0,
             pending_compile_call: None,
             pending_compile_primitive: None,
+            pending_constant_def: None,
         };
 
         // Initialize BASE to 10 (decimal)
@@ -1227,6 +1230,20 @@ impl VM {
             return Err(ForthError::StackUnderflow);
         }
         let index = self.loop_stack.get(self.loop_stack.depth() - 2)
+            .ok_or(ForthError::StackUnderflow)?;
+        self.data_stack.push(index);
+        Ok(())
+    }
+
+    fn op_j(&mut self) -> Result<(), ForthError> {
+        // J ( -- n )
+        // Push the outer loop index onto the data stack
+        // For nested loops, loop stack has: [outer_index, outer_limit, inner_index, inner_limit]
+        // Outer index is at depth - 4
+        if self.loop_stack.depth() < 4 {
+            return Err(ForthError::StackUnderflow);
+        }
+        let index = self.loop_stack.get(self.loop_stack.depth() - 4)
             .ok_or(ForthError::StackUnderflow)?;
         self.data_stack.push(index);
         Ok(())

@@ -185,14 +185,6 @@
 \ : FACTORIAL ( n -- n! )
 \   DUP 1 <= IF DROP 1 ELSE DUP 1 - FACTORIAL * THEN ;
 
-\ UNLESS - inverted IF
-: UNLESS  ( flag -- )
-    0= IF
-; IMMEDIATE
-
-: ENDUNLESS
-    THEN
-; IMMEDIATE
 
 \ ['] is implemented as a compiler word in bytecode_compiler.rs
 

@@ -47,7 +47,11 @@ enum ControlFrame {
     If { end_addr_placeholder: usize },
     IfElse { _else_addr_placeholder: usize, end_addr_placeholder: usize },
     Begin { start_addr: usize },
-    BeginWhile { start_addr: usize, end_addr_placeholder: usize },
+    BeginWhile {
+        start_addr: usize,
+        first_while_placeholder: Option<usize>,  // For ELSE/THEN
+        other_placeholders: Vec<usize>  // Inner WHILEs that jump to after REPEAT
+    },
     Do { start_addr: usize, leave_placeholders: Vec<usize> },
     QuestionDo { question_do_setup_addr: usize },
 }
@@ -632,6 +636,19 @@ impl BytecodeCompiler {
             None
         };
 
+        // Clean up any unresolved WHILE...REPEAT (without ELSE/THEN)
+        // REPEAT leaves an If frame that needs backpatching
+        while let Some(frame) = self.control_stack.last() {
+            if let ControlFrame::If { end_addr_placeholder } = frame {
+                let placeholder = *end_addr_placeholder;
+                self.control_stack.pop();
+                // Backpatch to here (before Return) - WHILE exits to end of word
+                self.backpatch(placeholder, self.here());
+            } else {
+                break;
+            }
+        }
+
         // Emit Return instruction
         self.emit(Instruction::Return);
 
@@ -713,6 +730,17 @@ impl BytecodeCompiler {
                     self.emit(Instruction::Call(*address));
                 } else {
                     self.interpreter.execute(&self.bytecode, *address)?;
+
+                    // Check if the word requested a constant definition (e.g., via DefineConstant instruction)
+                    if let Some((name, value)) = self.interpreter.vm.pending_constant_def.take() {
+                        self.dictionary.insert(
+                            name.clone(),
+                            WordInfo::Constant {
+                                name: name.clone(),
+                                value,
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -822,13 +850,27 @@ impl BytecodeCompiler {
 
         match frame {
             ControlFrame::Begin { start_addr } => {
-                // JumpIfZero to end (will be backpatched by REPEAT)
+                // First WHILE after BEGIN - reserve for ELSE/THEN
                 self.emit(Instruction::JumpIfZero(PLACEHOLDER_ADDR));
-                let end_placeholder = self.here() - 1;
+                let placeholder = self.here() - 1;
 
                 self.control_stack.push(ControlFrame::BeginWhile {
                     start_addr,
-                    end_addr_placeholder: end_placeholder,
+                    first_while_placeholder: Some(placeholder),
+                    other_placeholders: vec![],
+                });
+            }
+            ControlFrame::BeginWhile { start_addr, first_while_placeholder, mut other_placeholders } => {
+                // Additional WHILE - jumps to after REPEAT
+                self.emit(Instruction::JumpIfZero(PLACEHOLDER_ADDR));
+                let placeholder = self.here() - 1;
+
+                other_placeholders.push(placeholder);
+
+                self.control_stack.push(ControlFrame::BeginWhile {
+                    start_addr,
+                    first_while_placeholder,
+                    other_placeholders,
                 });
             }
             _ => return Err("WHILE without matching BEGIN".to_string()),
@@ -846,12 +888,22 @@ impl BytecodeCompiler {
             .ok_or("REPEAT without BEGIN/WHILE")?;
 
         match frame {
-            ControlFrame::BeginWhile { start_addr, end_addr_placeholder } => {
+            ControlFrame::BeginWhile { start_addr, first_while_placeholder, other_placeholders } => {
                 // Unconditional jump back to BEGIN
                 self.emit(Instruction::Jump(start_addr));
 
-                // Backpatch WHILE's jump to here
-                self.backpatch(end_addr_placeholder, self.here());
+                // Backpatch inner WHILEs to jump here (after REPEAT)
+                for placeholder in other_placeholders {
+                    self.backpatch(placeholder, self.here());
+                }
+
+                // Leave first WHILE for ELSE/THEN, or backpatch to here if no ELSE follows
+                if let Some(placeholder) = first_while_placeholder {
+                    // Push If frame so ELSE/THEN can handle it
+                    self.control_stack.push(ControlFrame::If {
+                        end_addr_placeholder: placeholder,
+                    });
+                }
             }
             _ => return Err("REPEAT without matching BEGIN/WHILE".to_string()),
         }
@@ -1044,8 +1096,15 @@ impl BytecodeCompiler {
     }
 
     fn begin_constant(&mut self) -> Result<(), String> {
+        // CONSTANT can work in two modes:
+        // 1. Interpret mode: 123 CONSTANT FOO -> creates FOO immediately
+        // 2. Compile mode: : EQU CONSTANT ; -> compiles DefineConstant instruction
+        //    When EQU is called later, it will parse the name and create the constant
+
         if self.state == CompileState::Compile {
-            return Err("CONSTANT cannot be used inside a definition".to_string());
+            // Emit DefineConstant instruction for runtime execution
+            self.emit(Instruction::DefineConstant);
+            return Ok(());
         }
 
         self.state = CompileState::ExpectingConstantName;

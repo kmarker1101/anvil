@@ -288,6 +288,47 @@ impl Interpreter {
                     self.vm.pending_compile_primitive = Some(*prim);
                     ip += 1;
                 }
+
+                Instruction::DefineConstant => {
+                    // DefineConstant: ( n "name" -- )
+                    // Pop value from stack
+                    let value = self
+                        .vm
+                        .data_stack
+                        .pop()
+                        .map_err(|e| format!("DefineConstant: {:?}", e))?;
+
+                    // Parse the next word from input using WORD primitive
+                    // Push space delimiter (ASCII 32)
+                    self.vm.data_stack.push(32);
+                    self.vm.execute_primitive(crate::primitives::Primitive::Word)
+                        .map_err(|e| format!("DefineConstant WORD: {:?}", e))?;
+
+                    // WORD returns c-addr of counted string
+                    let c_addr = self
+                        .vm
+                        .data_stack
+                        .pop()
+                        .map_err(|e| format!("DefineConstant c-addr: {:?}", e))? as usize;
+
+                    // Read counted string from memory
+                    if c_addr >= self.vm.memory.len() {
+                        return Err(format!("DefineConstant: c-addr out of bounds: {}", c_addr));
+                    }
+
+                    let count = self.vm.memory[c_addr] as usize;
+                    if c_addr + 1 + count > self.vm.memory.len() {
+                        return Err("DefineConstant: string extends beyond memory".to_string());
+                    }
+
+                    let word_bytes = &self.vm.memory[c_addr + 1..c_addr + 1 + count];
+                    let name = String::from_utf8_lossy(word_bytes).to_uppercase();
+
+                    // Store the constant definition request for the compiler to handle
+                    self.vm.pending_constant_def = Some((name.to_string(), value));
+
+                    ip += 1;
+                }
             }
         }
     }

@@ -60,6 +60,10 @@ pub enum Instruction {
 
     /// Compile a Primitive instruction into the current definition (for POSTPONE)
     CompilePrimitive(Primitive),
+
+    /// Define a constant at runtime: ( n "name" -- )
+    /// Pops value from stack, parses next word, creates constant in dictionary
+    DefineConstant,
 }
 
 /// A compiled word consists of bytecode instructions
